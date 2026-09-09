@@ -1,0 +1,25 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: tutor-learning-platform-execution-worker
+
+execution:
+  worker:
+    max-concurrent: ${EXECUTION_WORKER_MAX_CONCURRENT:4}
+    queue-timeout: ${EXECUTION_WORKER_QUEUE_TIMEOUT:100ms}
+    max-test-cases: ${EXECUTION_WORKER_MAX_TEST_CASES:100}
+  runtime:
+    docker-executable: ${EXECUTION_RUNTIME_DOCKER_EXECUTABLE:docker}
+    python-image: ${EXECUTION_RUNTIME_PYTHON_IMAGE:python:3.12.10-alpine3.21@sha256:9c51ecce261773a684c8345b2d4673700055c513b4d54bc0719337d3e4ee552e}
+    cpu-limit: ${EXECUTION_RUNTIME_CPU_LIMIT:1.0}
+    pid-limit: ${EXECUTION_RUNTIME_PID_LIMIT:32}
+    output-max-bytes: ${EXECUTION_RUNTIME_OUTPUT_MAX_BYTES:16384}
+    workspace-max-bytes: ${EXECUTION_RUNTIME_WORKSPACE_MAX_BYTES:1048576}
+    tmpfs-max-bytes: ${EXECUTION_RUNTIME_TMPFS_MAX_BYTES:16777216}
+    operation-timeout: ${EXECUTION_RUNTIME_OPERATION_TIMEOUT:10s}
+    container-startup-grace: ${EXECUTION_RUNTIME_CONTAINER_STARTUP_GRACE:2s}
+    workspace-directory: ${EXECUTION_RUNTIME_WORKSPACE_DIRECTORY:${java.io.tmpdir}/tutor-execution-workspaces}
+    # Empty for a host-run worker (bind mount); Compose supplies a dedicated named volume.
+    workspace-volume: ${EXECUTION_RUNTIME_WORKSPACE_VOLUME:}
