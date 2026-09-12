@@ -16,11 +16,11 @@ socket and all host configuration are absent from user runtime containers.
 Fast tests:
 
 ```bash
-../backend/gradlew -p . test
+./gradlew test
 ```
 
 Real sandbox integration tests (requires Docker and the configured Python image):
 
 ```bash
-../backend/gradlew -p . sandboxIntegrationTest
+./gradlew sandboxIntegrationTest
 ```

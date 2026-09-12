@@ -17,7 +17,9 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -36,6 +38,16 @@ class ExecutionWorkerApiTest {
         given(sandboxRuntime.execute(any())).willReturn(new SandboxResult(
             SandboxResult.Status.COMPLETED, 42, "hello\n", null, false, false
         ));
+    }
+
+    @Test
+    void healthReadinessIsAvailableWithoutExecutingUserCode() throws Exception {
+        mockMvc.perform(get("/actuator/health/readiness").header("X-Trace-Id", "smoke-trace"))
+            .andExpect(status().isOk())
+            .andExpect(header().string("X-Trace-Id", "smoke-trace"))
+            .andExpect(jsonPath("$.status").value("UP"));
+
+        verifyNoInteractions(sandboxRuntime);
     }
 
     @Test

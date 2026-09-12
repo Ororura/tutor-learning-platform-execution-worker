@@ -1,9 +1,24 @@
 server:
   port: 8090
+  shutdown: graceful
 
 spring:
   application:
     name: tutor-learning-platform-execution-worker
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      probes:
+        enabled: true
 
 execution:
   worker:

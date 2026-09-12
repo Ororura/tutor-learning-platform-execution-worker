@@ -1,2 +1,10 @@
+.git
 .gradle
 build
+.idea
+.vscode
+*.iml
+.env
+.env.*
+workspaces
+*.log

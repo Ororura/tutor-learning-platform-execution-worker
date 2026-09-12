@@ -1,7 +1,10 @@
-FROM gradle:8.14.3-jdk21-alpine AS build
+FROM eclipse-temurin:21-jdk-alpine AS build
 WORKDIR /workspace
-COPY . .
-RUN gradle bootJar --no-daemon
+COPY gradlew gradlew.bat settings.gradle.kts build.gradle.kts ./
+COPY gradle ./gradle
+RUN chmod +x gradlew && ./gradlew dependencies --no-daemon
+COPY src ./src
+RUN ./gradlew clean build -x test --no-daemon
 
 FROM eclipse-temurin:21-jre-alpine
 RUN apk add --no-cache docker-cli
