@@ -67,7 +67,7 @@ public class DockerSandboxRuntime implements SandboxRuntime {
     private final DockerCommandRunner commandRunner;
     private final ExecutionWorkerProperties properties;
 
-    public DockerSandboxRuntime(DockerCommandRunner commandRunner, ExecutionWorkerProperties properties) {
+    DockerSandboxRuntime(DockerCommandRunner commandRunner, ExecutionWorkerProperties properties) {
         this.commandRunner = commandRunner;
         this.properties = properties;
     }
@@ -123,6 +123,22 @@ public class DockerSandboxRuntime implements SandboxRuntime {
             Duration.ofMillis(request.timeLimitMs()).plus(properties.runtime().containerStartupGrace()),
             request.outputLimitBytes()
         );
+
+        log.info("""
+            Sandbox execution:
+            executionId={}
+            dockerExitCode={}
+            timeOut={}
+            durationMs={}
+            stdoud={}
+            stderr={}
+            """, request.executionId(),
+            runResult.exitCode(),
+            runResult.timedOut(),
+            runResult.durationMs(),
+            runResult.stdout(),
+            runResult.stderr());
+
         if (runResult.timedOut()) {
             return new SandboxResult(
                 SandboxResult.Status.TIMEOUT,
@@ -238,8 +254,7 @@ public class DockerSandboxRuntime implements SandboxRuntime {
 
     private List<String> createCommand(String containerName, Path workspace, SandboxRequest request) {
         var runtime = properties.runtime();
-        var command = new ArrayList<String>();
-        command.addAll(List.of(
+        var command = new ArrayList<String>(List.of(
             runtime.dockerExecutable(),
             "create",
             "--name", containerName,

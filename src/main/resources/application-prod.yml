@@ -1,4 +1,6 @@
 logging:
+  level:
+    com.tutorplatform.worker.infrastructure.docker: DEBUG
   structured:
     format:
       console: logstash
