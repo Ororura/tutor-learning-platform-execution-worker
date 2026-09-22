@@ -124,78 +124,63 @@ public class DockerSandboxRuntime implements SandboxRuntime {
             request.outputLimitBytes()
         );
 
-        log.info("""
-            Sandbox execution:
-            executionId={}
-            dockerExitCode={}
-            timeOut={}
-            durationMs={}
-            stdoud={}
-            stderr={}
-            """, request.executionId(),
-            runResult.exitCode(),
-            runResult.timedOut(),
-            runResult.durationMs(),
-            runResult.stdout(),
-            runResult.stderr());
-
         if (runResult.timedOut()) {
-            return new SandboxResult(
+            return logExecution(request, runResult, new SandboxResult(
                 SandboxResult.Status.TIMEOUT,
                 runResult.durationMs(),
                 nullIfEmpty(runResult.stdout()),
                 nullIfEmpty(runResult.stderr()),
                 runResult.stdoutTruncated(),
                 runResult.stderrTruncated()
-            );
+            ));
         }
 
         var state = inspectState(containerName, request.executionId());
         if (state == null) {
-            return systemError();
+            return logExecution(request, runResult, systemError());
         }
         if (state.exitCode() == 0) {
-            return new SandboxResult(
+            return logExecution(request, runResult, new SandboxResult(
                 SandboxResult.Status.COMPLETED,
                 runResult.durationMs(),
                 nullIfEmpty(runResult.stdout()),
                 nullIfEmpty(runResult.stderr()),
                 runResult.stdoutTruncated(),
                 runResult.stderrTruncated()
-            );
+            ));
         }
         if (state.exitCode() == 124) {
-            return new SandboxResult(
+            return logExecution(request, runResult, new SandboxResult(
                 SandboxResult.Status.TIMEOUT,
                 runResult.durationMs(),
                 nullIfEmpty(runResult.stdout()),
                 nullIfEmpty(runResult.stderr()),
                 runResult.stdoutTruncated(),
                 runResult.stderrTruncated()
-            );
+            ));
         }
         if (state.oomKilled()) {
-            return new SandboxResult(
+            return logExecution(request, runResult, new SandboxResult(
                 SandboxResult.Status.RUNTIME_ERROR,
                 runResult.durationMs(),
                 nullIfEmpty(runResult.stdout()),
                 nullIfEmpty(runResult.stderr()),
                 runResult.stdoutTruncated(),
                 runResult.stderrTruncated()
-            );
+            ));
         }
         if (state.exitCode() == 125 || state.exitCode() == 126 || state.exitCode() == 127) {
             logInfrastructureFailure(request.executionId(), "fixed-runtime-start");
-            return systemError();
+            return logExecution(request, runResult, systemError());
         }
-        return new SandboxResult(
+        return logExecution(request, runResult, new SandboxResult(
             SandboxResult.Status.RUNTIME_ERROR,
             runResult.durationMs(),
             nullIfEmpty(runResult.stdout()),
             nullIfEmpty(runResult.stderr()),
             runResult.stdoutTruncated(),
             runResult.stderrTruncated()
-        );
+        ));
     }
 
     private ContainerState inspectState(String containerName, UUID executionId)
@@ -354,6 +339,22 @@ public class DockerSandboxRuntime implements SandboxRuntime {
 
     private static String nullIfEmpty(String value) {
         return value == null || value.isEmpty() ? null : value;
+    }
+
+    private static SandboxResult logExecution(
+        SandboxRequest request,
+        DockerCommandResult runResult,
+        SandboxResult result
+    ) {
+        log.info(
+            "Sandbox execution completed: executionId={}, exitCode={}, timeout={}, durationMs={}, status={}",
+            request.executionId(),
+            runResult.exitCode(),
+            runResult.timedOut(),
+            runResult.durationMs(),
+            result.status()
+        );
+        return result;
     }
 
     private static void logInfrastructureFailure(UUID executionId, String stage) {
