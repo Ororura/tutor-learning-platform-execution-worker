@@ -20,6 +20,8 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/ororura/tutorplatform-execution-worker
+  SANDBOX_PYTHON_IMAGE: >-
+    python:3.12.10-alpine3.21@sha256:9c51ecce261773a684c8345b2d4673700055c513b4d54bc0719337d3e4ee552e
 
 jobs:
   checks:
@@ -43,12 +45,50 @@ jobs:
       - name: Test and build
         run: ./gradlew clean build --no-daemon
 
+  sandbox-integration:
+    name: Docker sandbox integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Grant execute permission
+        run: chmod +x gradlew
+
+      - name: Prepare Docker sandbox image
+        run: |
+          docker info
+          docker pull "${SANDBOX_PYTHON_IMAGE}"
+
+      - name: Run Docker sandbox integration tests
+        run: ./gradlew sandboxIntegrationTest --no-daemon
+
+      - name: Remove sandbox containers
+        if: always()
+        run: |
+          mapfile -t containers < <(
+            docker ps --all --quiet --filter "label=com.tutorplatform.execution=true"
+          )
+          if (( ${#containers[@]} > 0 )); then
+            docker rm --force "${containers[@]}"
+          fi
+
   docker:
     name: Build and push Docker image
     runs-on: ubuntu-latest
 
     needs:
       - checks
+      - sandbox-integration
 
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
