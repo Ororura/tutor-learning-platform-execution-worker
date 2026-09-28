@@ -14,7 +14,8 @@ RUN ./gradlew bootJar -x test --no-daemon
 
 FROM eclipse-temurin:21-jre-alpine
 
-RUN apk add --no-cache docker-cli
+RUN apk upgrade --no-cache \
+    && apk add --no-cache docker-cli
 
 WORKDIR /app
 
