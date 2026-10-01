@@ -20,6 +20,15 @@ management:
       show-components: never
       probes:
         enabled: true
+      group:
+        liveness:
+          include: livenessState
+          show-details: never
+          show-components: never
+        readiness:
+          include: readinessState,dockerRuntime
+          show-details: never
+          show-components: never
 
   metrics:
     tags:

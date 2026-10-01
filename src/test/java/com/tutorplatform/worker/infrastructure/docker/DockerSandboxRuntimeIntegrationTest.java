@@ -11,6 +11,7 @@ import com.tutorplatform.worker.config.ExecutionWorkerProperties;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.actuate.health.Status;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -21,6 +22,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 @Tag("sandbox-integration")
 class DockerSandboxRuntimeIntegrationTest {
@@ -29,6 +33,20 @@ class DockerSandboxRuntimeIntegrationTest {
 
     @TempDir
     private Path tempDirectory;
+
+    @Test
+    void readinessContactsRealDaemonWithoutCreatingSandboxOrWorkspace() throws Exception {
+        var runner = spy(new DockerCommandRunner());
+        var health = new DockerRuntimeHealthIndicator(runner, properties()).health();
+
+        assertThat(health.getStatus()).isEqualTo(Status.UP);
+        assertThat(health.getDetails()).isEmpty();
+        assertThat(tempDirectory.resolve("workspaces")).doesNotExist();
+        verify(runner).checkReadiness(
+            List.of("docker", "version", "--format={{if .Server}}ready{{end}}"), Duration.ofSeconds(1)
+        );
+        verifyNoMoreInteractions(runner);
+    }
 
     @Test
     void executesPythonAndSuppliesStdin() throws Exception {

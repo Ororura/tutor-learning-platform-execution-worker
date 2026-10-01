@@ -13,6 +13,22 @@ import java.util.concurrent.TimeUnit;
 @Component
 class DockerCommandRunner {
 
+    boolean checkReadiness(List<String> command, Duration timeout) throws IOException, InterruptedException {
+        // Health checks retain no daemon metadata or CLI diagnostics, including connection credentials.
+        var process = new ProcessBuilder(command)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start();
+        try {
+            process.getOutputStream().close();
+            return process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS) && process.exitValue() == 0;
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+            }
+        }
+    }
+
     DockerCommandResult run(List<String> command, String stdin, Duration timeout, int outputMaxBytes)
         throws IOException, InterruptedException {
         var startedAt = System.nanoTime();
