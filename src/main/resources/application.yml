@@ -26,7 +26,7 @@ management:
           show-details: never
           show-components: never
         readiness:
-          include: readinessState
+          include: readinessState,dockerRuntime
           show-details: never
           show-components: never
 
