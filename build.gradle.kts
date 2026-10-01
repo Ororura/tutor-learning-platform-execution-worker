@@ -1,11 +1,15 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.5.5"
+    id("org.springframework.boot") version "3.5.16"
     id("io.spring.dependency-management") version "1.1.7"
 }
 
 group = "com.tutorplatform"
 version = "0.1.0-SNAPSHOT"
+
+// Security patches newer than the Spring Boot 3.5.16 dependency BOM.
+extra["tomcat.version"] = "10.1.60"
+extra["jackson-bom.version"] = "2.21.7"
 
 java {
     toolchain {

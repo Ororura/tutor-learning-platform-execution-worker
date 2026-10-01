@@ -40,3 +40,35 @@ Any proposed exception must be scoped to that CVE and package path, include an
 owner and expiry, and retain visibility in a separate unfiltered report.
 Do not add a global severity bypass or blanket unfixed-vulnerability suppression.
 
+
+## Initial baseline (2026-10-01)
+
+The original production runtime image had six CRITICAL and 21 HIGH findings,
+all in shipped Java dependencies. Update Spring Boot within the 3.5 maintenance
+line from 3.5.5 to 3.5.16 to pick up patched Spring Framework and Micrometer.
+Tomcat and Jackson need explicit patch overrides newer than that Boot BOM.
+
+| Runtime package | Original | Patched | Findings |
+| --- | --- | --- | --- |
+| `com.fasterxml.jackson.core:jackson-core` | 2.19.2 | 2.21.7 | 1 HIGH |
+| `com.fasterxml.jackson.core:jackson-databind` | 2.19.2 | 2.21.7 | 5 HIGH |
+| `io.micrometer:micrometer-core` | 1.15.3 | 1.15.12 | 2 HIGH |
+| `org.apache.tomcat.embed:tomcat-embed-core` | 10.1.44 | 10.1.60 | 6 CRITICAL, 8 HIGH |
+| `org.springframework.boot:spring-boot` | 3.5.5 | 3.5.16 | 1 HIGH |
+| `org.springframework:spring-core` | 6.2.10 | 6.2.19 | 1 HIGH |
+| `org.springframework:spring-expression` | 6.2.10 | 6.2.19 | 1 HIGH |
+| `org.springframework:spring-webmvc` | 6.2.10 | 6.2.19 | 2 HIGH |
+
+Baseline advisory IDs (no findings are suppressed):
+
+- `com.fasterxml.jackson.core:jackson-core`: GHSA-r7wm-3cxj-wff9.
+- `com.fasterxml.jackson.core:jackson-databind`: CVE-2026-54512, CVE-2026-54513, CVE-2026-68497, CVE-2026-91776, CVE-2026-91777.
+- `io.micrometer:micrometer-core`: CVE-2026-40983, CVE-2026-40984.
+- `org.apache.tomcat.embed:tomcat-embed-core`: CVE-2026-41293, CVE-2026-43512, CVE-2026-43515, CVE-2026-65182, CVE-2026-65905, CVE-2026-68525, CVE-2025-55752, CVE-2026-24734, CVE-2026-24880, CVE-2026-34483, CVE-2026-34487, CVE-2026-41284, CVE-2026-42498, CVE-2026-43513.
+- `org.springframework.boot:spring-boot`: CVE-2026-40973.
+- `org.springframework:spring-core`: CVE-2025-41249.
+- `org.springframework:spring-expression`: CVE-2026-41850.
+- `org.springframework:spring-webmvc`: CVE-2026-41842, CVE-2026-41845.
+
+Remove the Tomcat/Jackson overrides once the Spring Boot BOM supplies at least
+these patched versions. No allow-list is needed.
