@@ -57,3 +57,8 @@ Real sandbox integration tests (requires Docker and the configured Python image)
 ```bash
 ./gradlew sandboxIntegrationTest
 ```
+
+## Immutable production delivery
+
+See [production delivery](docs/production-delivery.md) for exact image selection,
+smoke verification, deployed SHA inspection and manual rollback.

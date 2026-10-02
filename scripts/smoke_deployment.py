@@ -71,7 +71,7 @@ def container_states(directory):
 
 
 def request(target, timeout, directory, private_worker=False):
-    command = ["curl", "--silent", "--location", "--max-redirs", "5",
+    command = ["curl", "--disable", "--silent", "--location", "--max-redirs", "5",
                "--proto", "=http,https", "--proto-redir", "=http,https",
                "--connect-timeout", str(timeout), "--max-time", str(timeout),
                "--max-filesize", "16384", "--write-out", "\n%{http_code}", target]
