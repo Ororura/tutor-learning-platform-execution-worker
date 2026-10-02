@@ -1,0 +1,30 @@
+# Sanitized relationships observed on adminvps; no production environment or secrets.
+services:
+  postgres:
+    image: postgres:16-alpine
+    healthcheck:
+      test: [CMD, pg_isready]
+    networks: [database]
+  backend:
+    image: ghcr.io/ororura/tutorplatform-backend:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    networks: [application, database]
+  execution-worker:
+    image: ghcr.io/ororura/tutorplatform-execution-worker:latest
+    networks: [application]
+  frontend:
+    image: ghcr.io/ororura/tutorplatform-frontend:latest
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    networks: [application]
+networks:
+  application:
+  database:
+    internal: true

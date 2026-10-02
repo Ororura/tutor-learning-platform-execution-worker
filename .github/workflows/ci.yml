@@ -12,7 +12,7 @@ on:
 
 concurrency:
   group: execution-worker-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -23,6 +23,23 @@ env:
     python:3.12.10-alpine3.21@sha256:9c51ecce261773a684c8345b2d4673700055c513b4d54bc0719337d3e4ee552e
 
 jobs:
+  delivery-checks:
+    name: Deployment verification tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Compile operational scripts
+        run: python3 -m compileall -q scripts tests/ops
+      - name: Smoke, deployment and Compose regression tests
+        run: python3 -m unittest discover -s tests/ops -v
+      - name: Validate GitHub Actions and embedded shell
+        run: |
+          docker run --rm --network none --workdir /repo \
+            --mount "type=bind,source=$PWD,target=/repo,readonly" \
+            rhysd/actionlint:1.7.12 .github/workflows/ci.yml
+
   checks:
     name: Execution worker checks
     runs-on: ubuntu-latest
@@ -82,6 +99,8 @@ jobs:
           fi
 
   docker:
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
     name: Build and scan production image
     runs-on: ubuntu-latest
     permissions:
@@ -90,6 +109,7 @@ jobs:
 
     needs:
       - checks
+      - delivery-checks
       - sandbox-integration
 
     steps:
@@ -109,6 +129,9 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -151,39 +174,43 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push scanned image
+        id: publish
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           docker push "$IMAGE_NAME:${{ github.sha }}"
           docker push "$IMAGE_NAME:latest"
+          reference=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_NAME:${{ github.sha }}" | awk -v repo="$IMAGE_NAME@" 'index($0, repo) == 1 {print; exit}')
+          digest="${reference#*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Missing published image digest'; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Published commit=${{ github.sha }} repository=$IMAGE_NAME tag=${{ github.sha }} digest=$digest"
+          echo "Published image: $IMAGE_NAME:${{ github.sha }}@$digest" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
-    name: Deploy
+    name: Deploy immutable image to production and demo
     runs-on: ubuntu-latest
-
-    needs:
-      - docker
-
+    timeout-minutes: 45
+    needs: docker
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      IMAGE_SHA: ${{ github.sha }}
+      IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
+      PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL || 'https://tutor.ororura.site' }}
+      DEMO_PUBLIC_BASE_URL: ${{ vars.DEMO_PUBLIC_BASE_URL || 'https://demo.ororura.site' }}
     steps:
+      - name: Checkout deployment scripts from this commit
+        uses: actions/checkout@v7
       - name: Setup SSH
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Deploy
-        run: |
-          ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" << 'EOF'
-            set -e
-
-            cd /opt/tutorplatform
-
-            docker compose pull execution-worker
-            docker compose up -d execution-worker
-
-            docker image prune -f
-          EOF
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/tutorplatform_deploy
+          chmod 600 ~/.ssh/tutorplatform_deploy
+          ssh-keygen -y -f ~/.ssh/tutorplatform_deploy > /dev/null
+          ssh-keyscan -T 10 -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+      - name: Deploy exact scanned digest and verify both environments
+        run: python3 scripts/deploy_remote.py
