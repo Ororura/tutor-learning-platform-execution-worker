@@ -90,7 +90,7 @@ def healthchecks(override):
                     "http://127.0.0.1:8080/actuator/health/readiness"],
         "execution-worker": ["CMD", "curl", "--fail", "--silent", "--max-time", "4",
                              "http://127.0.0.1:8090/actuator/health/readiness"],
-        "frontend": ["CMD", "node", "-e", "const r=require('http').get('http://127.0.0.1:3000/',res=>{res.resume();process.exit(res.statusCode>=200&&res.statusCode<400?0:1)});r.setTimeout(4000,()=>{r.destroy();process.exit(1)});r.on('error',()=>process.exit(1));"],
+        "frontend": ["CMD", "node", "-e", "const r=require('http').get({hostname:process.env.HOSTNAME||'127.0.0.1',port:3000,path:'/'},res=>{res.resume();process.exit(res.statusCode>=200&&res.statusCode<400?0:1)});r.setTimeout(4000,()=>{r.destroy();process.exit(1)});r.on('error',()=>process.exit(1));"],
     }
     for name, test in probes.items():
         override["services"][name]["healthcheck"] = {

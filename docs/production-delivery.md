@@ -24,7 +24,9 @@ Existing server environments, networks, ports, databases, volumes and Caddy rema
 in the base `compose.yml`. An existing unmanaged override is rejected for manual
 integration. Local development Compose is unchanged.
 
-The override adds bounded HTTP healthchecks for the applications. Deployment also
+The override adds bounded HTTP healthchecks for the applications. The frontend
+probe uses the configured Next.js listener hostname, which may be the Docker
+container hostname rather than loopback. Deployment also
 requires PostgreSQL health, backend's healthy PostgreSQL dependency and frontend's
 healthy backend dependency, and rejects externally published PostgreSQL/worker
 ports. Existing restart policies remain; bounded health/smoke verification exposes

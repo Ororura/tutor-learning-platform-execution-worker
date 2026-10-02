@@ -155,6 +155,18 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(1, result)
         self.assertIn('"status": "DOWN"', output)
 
+    def test_frontend_probe_follows_nextjs_listener_hostname(self):
+        import os
+        override = {"services": {name: {} for name in deploy.IMAGES}}
+        deploy.healthchecks(override)
+        probe = override["services"]["frontend"]["healthcheck"]["test"][3]
+        probe = probe.replace("3000", str(self.server.server_port))
+        for hostname, expected in (("127.0.0.1", 0), ("127.0.0.2", 1)):
+            with self.subTest(hostname=hostname):
+                result = subprocess.run(["node", "-e", probe], env=dict(os.environ, HOSTNAME=hostname),
+                                        capture_output=True, timeout=6)
+                self.assertEqual(expected, result.returncode)
+
     def test_worker_uses_container_network(self):
         completed = subprocess.CompletedProcess([], 0, stdout=b'{"status":"UP"}\n200')
         with patch.object(smoke.subprocess, "run", return_value=completed) as runner:
