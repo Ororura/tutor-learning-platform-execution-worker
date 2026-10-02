@@ -120,13 +120,20 @@ def deploy(args):
     directory = args.directory.resolve()
     if not (directory / "compose.yml").is_file():
         raise ValueError("directory must contain the existing compose.yml")
-    if not SHA.fullmatch(args.sha):
+    rollback_reference = getattr(args, "rollback_reference", None)
+    if rollback_reference:
+        repository = IMAGES[args.service]
+        match = re.fullmatch(re.escape(repository) + r"(?::([0-9a-f]{40}))?@(sha256:[0-9a-f]{64})", rollback_reference)
+        if not match or (args.digest and args.digest != match[2]):
+            raise ValueError("rollback-reference must be a pinned digest from this service's delivery history")
+        args.sha, args.digest = match[1], match[2]
+    elif not args.sha or not SHA.fullmatch(args.sha):
         raise ValueError("sha must be a full lowercase 40-character commit SHA")
     if args.digest and not DIGEST.fullmatch(args.digest):
         raise ValueError("digest must be sha256 followed by 64 lowercase hexadecimal characters")
     if not 1 <= args.attempts <= 60:
         raise ValueError("attempts must be between 1 and 60")
-    if not args.digest:
+    if rollback_reference or not args.digest:
         print("Manual image selection: verify DB migrations are backward-compatible before rollback", flush=True)
     with (directory / ".delivery.lock").open("a") as lock:
         deadline = time.monotonic() + 180
@@ -141,10 +148,10 @@ def deploy(args):
         previous = pinned_running_image(directory, args.service)
         override = managed_override(directory)
         repository = IMAGES[args.service]
-        tag_reference = f"{repository}:{args.sha}"
+        tag_reference = repository + (":" + args.sha if args.sha else "")
         reference = tag_reference + ("@" + args.digest if args.digest else "")
-        print(f"environment={args.environment} commit={args.sha} repository={repository} "
-              f"tag={args.sha} digest={args.digest or 'resolve from GHCR'} previous={previous}", flush=True)
+        print(f"environment={args.environment} commit={args.sha or 'legacy-unknown'} repository={repository} "
+              f"tag={args.sha or 'legacy-unknown'} digest={args.digest or 'resolve from GHCR'} previous={previous}", flush=True)
         # Pull immutable reference before changing persistent Compose state.
         run(["docker", "pull", reference], directory, timeout=300)
         image = json.loads(run(["docker", "image", "inspect", reference], directory))[0]
@@ -191,7 +198,9 @@ def main():
     arguments = smoke_parser()
     arguments.description = __doc__
     arguments.add_argument("--service", choices=IMAGES, default=DEFAULT_SERVICE)
-    arguments.add_argument("--sha", required=True)
+    selection = arguments.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--sha")
+    selection.add_argument("--rollback-reference", help="exact previous reference from .delivery-history.json")
     arguments.add_argument("--digest")
     arguments.add_argument("--environment", choices=("production", "demo"), required=True)
     args = arguments.parse_args()

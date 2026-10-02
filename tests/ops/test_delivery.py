@@ -231,6 +231,12 @@ class DeliveryTests(unittest.TestCase):
         first_pull = next(command for command in self.commands if command[:2] == ["docker", "pull"])
         self.assertTrue(first_pull[-1].endswith(":" + "d" * 40))
 
+    def test_legacy_rollback_uses_recorded_digest(self):
+        reference = deploy.IMAGES["backend"] + "@" + self.digest
+        self.assertEqual(0, self.execute(sha=None, digest=None, rollback_reference=reference))
+        first_pull = next(command for command in self.commands if command[:2] == ["docker", "pull"])
+        self.assertEqual(reference, first_pull[-1])
+
     def test_invalid_sha_has_no_docker_calls(self):
         with self.assertRaises(ValueError):
             self.execute(sha="latest")
