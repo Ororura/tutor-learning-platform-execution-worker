@@ -12,7 +12,7 @@ on:
 
 concurrency:
   group: execution-worker-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -82,6 +82,8 @@ jobs:
           fi
 
   docker:
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
     name: Build and scan production image
     runs-on: ubuntu-latest
     permissions:
@@ -109,6 +111,9 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -151,10 +156,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push scanned image
+        id: publish
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           docker push "$IMAGE_NAME:${{ github.sha }}"
           docker push "$IMAGE_NAME:latest"
+          reference=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_NAME:${{ github.sha }}" | awk -v repo="$IMAGE_NAME@" 'index($0, repo) == 1 {print; exit}')
+          digest="${reference#*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Missing published image digest'; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Published commit=${{ github.sha }} repository=$IMAGE_NAME tag=${{ github.sha }} digest=$digest"
+          echo "Published image: $IMAGE_NAME:${{ github.sha }}@$digest" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy
