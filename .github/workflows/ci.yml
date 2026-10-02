@@ -23,6 +23,23 @@ env:
     python:3.12.10-alpine3.21@sha256:9c51ecce261773a684c8345b2d4673700055c513b4d54bc0719337d3e4ee552e
 
 jobs:
+  delivery-checks:
+    name: Deployment verification tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Compile operational scripts
+        run: python3 -m compileall -q scripts tests/ops
+      - name: Smoke, deployment and Compose regression tests
+        run: python3 -m unittest discover -s tests/ops -v
+      - name: Validate GitHub Actions and embedded shell
+        run: |
+          docker run --rm --network none --workdir /repo \
+            --mount "type=bind,source=$PWD,target=/repo,readonly" \
+            rhysd/actionlint:1.7.12 .github/workflows/ci.yml
+
   checks:
     name: Execution worker checks
     runs-on: ubuntu-latest
@@ -92,6 +109,7 @@ jobs:
 
     needs:
       - checks
+      - delivery-checks
       - sandbox-integration
 
     steps:
