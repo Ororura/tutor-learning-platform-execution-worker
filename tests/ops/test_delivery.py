@@ -194,12 +194,14 @@ class DeliveryTests(unittest.TestCase):
 
     def args(self, **kwargs):
         values = dict(directory=self.root, service="backend", sha=self.sha, digest=self.digest,
-                      environment="production", attempts=1)
+                      environment="production", attempts=1, timeout=120)
         values.update(kwargs)
         return argparse_namespace(**values)
 
     def fake_run(self, command, directory, timeout=60):
         self.commands.append(command)
+        if "up" in command:
+            self.assertGreater(timeout, 120)
         if command[:3] == ["docker", "image", "inspect"]:
             return json.dumps([{"Id": "expected-image-id", "RepoDigests": [deploy.IMAGES["backend"] + "@" + self.digest]}])
         if "config" in command:
@@ -237,6 +239,52 @@ class DeliveryTests(unittest.TestCase):
         history = json.loads((self.root / ".delivery-history.json").read_text())
         self.assertFalse(history[-1]["verified"])
         self.assertEqual(1, len([command for command in self.commands if "up" in command]))
+
+    def test_failed_startup_diagnoses_once_and_remains_failed(self):
+        for failure in (RuntimeError("Compose unhealthy"),
+                        subprocess.TimeoutExpired(["docker", "compose", "up"], 135)):
+            with self.subTest(failure=type(failure).__name__):
+                original_run = self.fake_run
+
+                def fail_up(command, directory, timeout=60):
+                    result = original_run(command, directory, timeout)
+                    if "up" in command:
+                        raise failure
+                    return result
+
+                with patch.object(self, "fake_run", side_effect=fail_up), \
+                     self.assertRaises(type(failure)):
+                    self.execute(smoke_result=0)
+                history = json.loads((self.root / ".delivery-history.json").read_text())
+                self.assertFalse(history[-1]["verified"])
+                self.assertNotIn("down", [part for command in self.commands for part in command])
+
+    def test_startup_diagnostics_have_bounded_budget(self):
+        def fail_up(command, directory, timeout=60):
+            result = self.fake_run(command, directory, timeout)
+            if "up" in command:
+                raise RuntimeError("Compose unhealthy")
+            return result
+
+        with patch.object(deploy, "run", side_effect=fail_up), \
+             patch.object(deploy, "pinned_running_image", side_effect=lambda _, name: deploy.IMAGES[name] + "@" + self.digest), \
+             patch.object(deploy, "verify", return_value=1) as verifier, \
+             contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+            deploy.deploy(self.args(attempts=12))
+        verifier.assert_called_once()
+        diagnostics = verifier.call_args.args[0]
+        self.assertEqual(1, diagnostics.attempts)
+        self.assertEqual(15, diagnostics.timeout)
+
+    def test_wrong_running_artifact_cannot_be_verified(self):
+        with patch.object(deploy, "run", side_effect=self.fake_run), \
+             patch.object(deploy, "pinned_running_image", side_effect=lambda _, name: deploy.IMAGES[name] + "@" + self.digest), \
+             patch.object(deploy, "running_image", return_value={"Image": "different-image-id", "State": {"Status": "running", "Health": {"Status": "healthy"}}}), \
+             patch.object(deploy, "verify", return_value=0), \
+             contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+            deploy.deploy(self.args())
+        history = json.loads((self.root / ".delivery-history.json").read_text())
+        self.assertFalse(history[-1]["verified"])
 
     def test_manual_rollback_resolves_old_sha(self):
         self.assertEqual(0, self.execute(sha="d" * 40, digest=None))
