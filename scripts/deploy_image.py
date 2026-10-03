@@ -2,6 +2,7 @@
 """Deploy or manually roll back one service, then verify the whole stack."""
 
 import argparse
+import copy
 import fcntl
 import json
 import os
@@ -180,8 +181,18 @@ def deploy(args):
         atomic_json(directory / "compose.override.yml", override)
         print(f"Deploying {reference}; manual rollback reference={previous}", flush=True)
         run([*compose_command(directory), "pull", args.service], directory, timeout=300)
-        run([*compose_command(directory), "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "120",
-             args.service], directory, timeout=120)
+        try:
+            # Allow Compose to report its own bounded health timeout before killing the CLI.
+            run([*compose_command(directory), "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "120",
+                 args.service], directory, timeout=135)
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            print(f"Container startup failed service={args.service}; collecting read-only HTTP diagnostics", flush=True)
+            diagnostics = copy.copy(args)
+            diagnostics.attempts = 1
+            diagnostics.timeout = min(args.timeout, 15)
+            verify(diagnostics)
+            # Even if HTTP recovered, the failed Compose command must fail delivery.
+            raise
         if verify(args):
             return 1
         container = running_image(directory, args.service)
