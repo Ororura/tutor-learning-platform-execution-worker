@@ -8,6 +8,8 @@ The workflow builds once, scans the loaded runtime image with Trivy (HIGH/CRITIC
 including unfixed findings), then pushes the same image as `latest` and the full
 commit SHA. Production and demo deploy `:<sha>@sha256:<digest>` from that successful
 workflow. The digest also protects deployment against a tag changing on a rerun.
+After the VPS checks, the GitHub runner independently checks the public frontend
+and API. The deployment job succeeds only after both vantage points pass.
 OCI labels record source repository and revision; logs and the Actions summary
 record commit, image repository, tag, digest and environment.
 
@@ -47,6 +49,19 @@ python3 ops/execution-worker/smoke_deployment.py \
   --public-base-url https://tutor.ororura.site
 ```
 
+From outside the VPS, run the external-only checker (no Docker or internal URLs needed):
+
+```bash
+python3 scripts/smoke_deployment.py --public-only \
+  --public-base-url https://tutor.ororura.site
+```
+
+The workflow runs this mode on its GitHub runner after the remote full-stack smoke
+for each environment. External failure exits nonzero, reads safe VPS container
+states, stops before any subsequent environment and leaves manual rollback to the
+operator. The VPS history field `verified` records VPS checks only; it can be true
+when runner smoke fails. The Actions job result is the end-to-end success signal.
+
 The same checker is available locally as `python3 scripts/smoke_deployment.py`.
 `FRONTEND_URL`, `BACKEND_URL`, `PUBLIC_BASE_URL` and optional `WORKER_URL`
 can replace URL arguments. Without `WORKER_URL`, readiness runs through
@@ -64,7 +79,13 @@ never cookies, arbitrary response bodies or environment values.
 Defaults: 12 attempts, 5 seconds/request, 5 seconds between attempts, a 120-second
 smoke deadline, plus at most 5 seconds for failure container diagnostics.
 Override with `--attempts`, `--request-timeout`, `--delay`, `--timeout`.
-Failure exits nonzero, prints safe container states, and keeps the attempted pin
+If `compose up --wait` fails or its CLI times out, delivery runs one read-only
+HTTP diagnostic pass with a 15-second budget. It prints the expected URLs, HTTP
+statuses and allowlisted health fragments; the original startup error remains a
+failure even if those GETs succeed. The CLI allows 135 seconds for Compose to
+complete its own 120-second health wait and return an error.
+
+VPS verification failure exits nonzero, prints safe container states, and keeps the attempted pin
 and history entry marked `verified=false`. There is no automatic rollback or cleanup.
 
 ## Manual rollback
@@ -99,11 +120,22 @@ port `3001`, backend port `8081`, and `https://demo.ororura.site` in both comman
 ## CI and VPS prerequisites
 
 Existing GitHub secrets: `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`.
-Optional repository variables: `PRODUCTION_PUBLIC_BASE_URL`, `DEMO_PUBLIC_BASE_URL`;
+Optional repository variables: `SERVER_SSH_PORT` (default `22`),
+`PRODUCTION_PUBLIC_BASE_URL`, `DEMO_PUBLIC_BASE_URL`;
 the defaults above were verified on adminvps. All repositories must deploy to the
 same host/user and stack paths. The user needs Docker access, registry pull access,
 and write access to stack directories and `ops/execution-worker`. The workflow installs its
 operational scripts there; no extra secret or deployment environment file is needed.
+Before uploading scripts, each environment performs a read-only SSH write-access
+preflight and logs commit, image repository, SHA, digest and environment. A failed
+preflight stops that environment without changing images or stack state.
+`SERVER_SSH_PORT` must be `1..65535` and is used consistently by keyscan, SSH and SCP.
+The current merged-main rollout runs failed on SSH port 22 connection timeouts
+from GitHub-hosted runners, before any image deployment. An administrator must
+verify that `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY` and the configured port
+permit access from those runners (routing/firewall/SSH policy). A local successful
+`adminvps` login does not establish runner connectivity.
+
 The audited `adminvps` login (`ororura`) cannot write the root-owned stack directories.
 Before first rollout, an administrator should confirm the actual `SERVER_USER` is
 in the existing `deploy` group, then grant that group directory write access:
@@ -122,7 +154,11 @@ each application. Keep earlier images/tags available in GHCR for rollback.
 
 Run `python3 -m compileall -q scripts tests/ops` and
 `python3 -m unittest discover -s tests/ops -v`. CI also validates Actions YAML and
-embedded shell with actionlint 1.7.12. Mock HTTP tests cover each failure, malformed
+embedded shell with actionlint 1.7.12. Remote-command tests cover default/custom SSH ports, invalid configuration,
+production/demo preflight refusal and safe diagnostics without uploads or deployment.
+Mock HTTP tests cover each failure, malformed
 health, HTTP-200/DOWN, retries, request/global timeouts and finite attempts; mocked
 Docker tests cover pins, manual rollback, failure history and configuration refusal.
+Additional regressions cover Compose startup errors/timeouts, diagnostic budgets
+and rejection of a different running image after successful HTTP smoke.
 Real Compose rendering covers the production/demo relationships observed on VPS.

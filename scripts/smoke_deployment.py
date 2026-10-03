@@ -33,10 +33,12 @@ def url(value):
 
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
+    result.add_argument("--public-only", action="store_true",
+                        help="check public frontend/API from outside the VPS after private smoke")
     for name in ("frontend", "backend", "public-base"):
         result.add_argument(f"--{name}-url", type=url,
                             default=os.environ.get(name.upper().replace("-", "_") + "_URL"),
-                            required=not os.environ.get(name.upper().replace("-", "_") + "_URL"))
+                            required=name == "public-base" and not os.environ.get("PUBLIC_BASE_URL"))
     result.add_argument("--worker-url", type=url, default=os.environ.get("WORKER_URL"))
     result.add_argument("--directory", type=Path, default=Path.cwd())
     result.add_argument("--attempts", type=int, default=12)
@@ -89,14 +91,19 @@ def request(target, timeout, directory, private_worker=False):
 def verify(args):
     if not 1 <= args.attempts <= 60:
         raise ValueError("attempts must be between 1 and 60")
-    checks = [
+    public_only = getattr(args, "public_only", False)
+    if not public_only and (not args.frontend_url or not args.backend_url):
+        raise ValueError("frontend-url and backend-url are required for full-stack smoke")
+    checks = [] if public_only else [
         ("frontend", args.frontend_url + "/", "page", False),
         ("backend readiness", args.backend_url + "/actuator/health/readiness", "health", False),
         ("worker readiness", (args.worker_url or "http://127.0.0.1:8090") + "/actuator/health/readiness",
          "health", not args.worker_url),
+    ]
+    checks.extend([
         ("public frontend", args.public_base_url + "/", "page", False),
         ("public API", args.public_base_url + "/api/v1/public/registration-settings", "api", False),
-    ]
+    ])
     deadline = time.monotonic() + args.timeout
     for attempt in range(1, args.attempts + 1):
         passed = True
@@ -133,7 +140,8 @@ def verify(args):
         else:
             break
     print("Smoke verification failed; no rollback or cleanup was performed", flush=True)
-    container_states(args.directory)
+    if not public_only:
+        container_states(args.directory)
     return 1
 
 

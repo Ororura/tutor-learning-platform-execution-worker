@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import shutil
@@ -18,6 +19,7 @@ SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import deploy_image as deploy
 import smoke_deployment as smoke
+import deploy_remote as remote
 
 
 class SmokeTests(unittest.TestCase):
@@ -93,6 +95,28 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(0, result)
         self.assertEqual(5, output.count("result=PASS"))
         self.assertEqual(5, len(self.requests))
+
+    def test_external_mode_only_requests_public_endpoints(self):
+        args = smoke.parser().parse_args(["--public-only", "--public-base-url", self.base + "/public"])
+        with contextlib.redirect_stdout(io.StringIO()), patch.object(smoke, "container_states") as states:
+            self.assertEqual(0, smoke.verify(args))
+        self.assertEqual(["/public/", "/public/api/v1/public/registration-settings"], self.requests)
+        states.assert_not_called()
+
+    def test_external_failure_is_bounded_without_local_docker_diagnostics(self):
+        type(self).fail_path = "/public/api/v1/public/registration-settings"
+        type(self).fail_remaining = -1
+        with contextlib.redirect_stdout(io.StringIO()), patch.object(smoke, "container_states") as states:
+            self.assertEqual(1, smoke.verify(self.args("--public-only")))
+        self.assertEqual(4, len(self.requests))
+        self.assertTrue(all(path.startswith("/public/") for path in self.requests))
+        states.assert_not_called()
+
+    def test_full_stack_mode_requires_internal_urls(self):
+        args = smoke.parser().parse_args(["--public-base-url", self.base])
+        with patch.object(smoke, "request") as requester, self.assertRaises(ValueError):
+            smoke.verify(args)
+        requester.assert_not_called()
 
     def test_each_service_failure(self):
         for path in ("/frontend/", "/backend/actuator/health/readiness",
@@ -194,12 +218,15 @@ class DeliveryTests(unittest.TestCase):
 
     def args(self, **kwargs):
         values = dict(directory=self.root, service="backend", sha=self.sha, digest=self.digest,
-                      environment="production", attempts=1)
+                      environment="production", attempts=1, timeout=120,
+                      frontend_url="http://127.0.0.1:3000", backend_url="http://127.0.0.1:8080")
         values.update(kwargs)
         return argparse_namespace(**values)
 
     def fake_run(self, command, directory, timeout=60):
         self.commands.append(command)
+        if "up" in command:
+            self.assertGreater(timeout, 120)
         if command[:3] == ["docker", "image", "inspect"]:
             return json.dumps([{"Id": "expected-image-id", "RepoDigests": [deploy.IMAGES["backend"] + "@" + self.digest]}])
         if "config" in command:
@@ -238,6 +265,52 @@ class DeliveryTests(unittest.TestCase):
         self.assertFalse(history[-1]["verified"])
         self.assertEqual(1, len([command for command in self.commands if "up" in command]))
 
+    def test_failed_startup_diagnoses_once_and_remains_failed(self):
+        for failure in (RuntimeError("Compose unhealthy"),
+                        subprocess.TimeoutExpired(["docker", "compose", "up"], 135)):
+            with self.subTest(failure=type(failure).__name__):
+                original_run = self.fake_run
+
+                def fail_up(command, directory, timeout=60):
+                    result = original_run(command, directory, timeout)
+                    if "up" in command:
+                        raise failure
+                    return result
+
+                with patch.object(self, "fake_run", side_effect=fail_up), \
+                     self.assertRaises(type(failure)):
+                    self.execute(smoke_result=0)
+                history = json.loads((self.root / ".delivery-history.json").read_text())
+                self.assertFalse(history[-1]["verified"])
+                self.assertNotIn("down", [part for command in self.commands for part in command])
+
+    def test_startup_diagnostics_have_bounded_budget(self):
+        def fail_up(command, directory, timeout=60):
+            result = self.fake_run(command, directory, timeout)
+            if "up" in command:
+                raise RuntimeError("Compose unhealthy")
+            return result
+
+        with patch.object(deploy, "run", side_effect=fail_up), \
+             patch.object(deploy, "pinned_running_image", side_effect=lambda _, name: deploy.IMAGES[name] + "@" + self.digest), \
+             patch.object(deploy, "verify", return_value=1) as verifier, \
+             contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+            deploy.deploy(self.args(attempts=12))
+        verifier.assert_called_once()
+        diagnostics = verifier.call_args.args[0]
+        self.assertEqual(1, diagnostics.attempts)
+        self.assertEqual(15, diagnostics.timeout)
+
+    def test_wrong_running_artifact_cannot_be_verified(self):
+        with patch.object(deploy, "run", side_effect=self.fake_run), \
+             patch.object(deploy, "pinned_running_image", side_effect=lambda _, name: deploy.IMAGES[name] + "@" + self.digest), \
+             patch.object(deploy, "running_image", return_value={"Image": "different-image-id", "State": {"Status": "running", "Health": {"Status": "healthy"}}}), \
+             patch.object(deploy, "verify", return_value=0), \
+             contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+            deploy.deploy(self.args())
+        history = json.loads((self.root / ".delivery-history.json").read_text())
+        self.assertFalse(history[-1]["verified"])
+
     def test_manual_rollback_resolves_old_sha(self):
         self.assertEqual(0, self.execute(sha="d" * 40, digest=None))
         first_pull = next(command for command in self.commands if command[:2] == ["docker", "pull"])
@@ -253,6 +326,14 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.execute(sha="latest")
         self.assertEqual([], self.commands)
+
+    def test_missing_or_external_only_smoke_configuration_cannot_deploy(self):
+        for arguments in ({"frontend_url": None}, {"backend_url": None}, {"public_only": True}):
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                self.execute(**arguments)
+            self.assertEqual([], self.commands)
+            self.assertFalse((self.root / ".delivery.lock").exists())
+            self.assertFalse((self.root / "compose.override.yml").exists())
 
     def test_digest_mismatch_preserves_existing_compose(self):
         with self.assertRaises(RuntimeError):
@@ -278,6 +359,89 @@ class DeliveryTests(unittest.TestCase):
         self.config["services"]["backend"]["depends_on"]["postgres"]["condition"] = "service_started"
         with self.assertRaises(RuntimeError):
             deploy.validate_compose(self.config)
+
+
+class RemoteDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        verifier = patch.object(remote, "verify", return_value=0)
+        self.verifier = verifier.start()
+        self.addCleanup(verifier.stop)
+        self.environment = {
+            "IMAGE_SHA": "a" * 40, "IMAGE_DIGEST": "sha256:" + "b" * 64,
+            "SERVER_HOST": "example.com", "SERVER_USER": "deploy",
+            "PRODUCTION_PUBLIC_BASE_URL": "https://production.example.com",
+            "DEMO_PUBLIC_BASE_URL": "https://demo.example.com",
+        }
+
+    def test_configured_port_reaches_ssh_and_scp_for_both_environments(self):
+        with patch.dict(os.environ, dict(self.environment, SERVER_SSH_PORT="2222"), clear=True), \
+             patch.object(remote.subprocess, "run") as runner, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, remote.main())
+        self.assertEqual(8, runner.call_count)
+        for call in runner.call_args_list:
+            command = call.args[0]
+            flag = "-P" if command[0] == "scp" else "-p"
+            self.assertEqual("2222", command[command.index(flag) + 1])
+        self.assertIn("test -w /opt/tutorplatform", runner.call_args_list[0].args[0][-1])
+        self.assertIn("test -w /opt/tutorplatform-demo", runner.call_args_list[4].args[0][-1])
+        self.assertIn(self.environment["IMAGE_SHA"], runner.call_args_list[3].args[0][-1])
+        self.assertIn(self.environment["IMAGE_DIGEST"], runner.call_args_list[7].args[0][-1])
+        self.assertEqual(2, self.verifier.call_count)
+        self.assertTrue(all(call.args[0].public_only for call in self.verifier.call_args_list))
+
+    def test_default_port_is_22(self):
+        with patch.dict(os.environ, self.environment, clear=True), \
+             patch.object(remote.subprocess, "run") as runner, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, remote.main())
+        command = runner.call_args_list[0].args[0]
+        self.assertEqual("22", command[command.index("-p") + 1])
+
+    def test_invalid_port_has_no_remote_calls(self):
+        for port in ("0", "65536", "22;touch /tmp/data", "-1", "", "secret"):
+            with self.subTest(port=port), \
+                 patch.dict(os.environ, dict(self.environment, SERVER_SSH_PORT=port), clear=True), \
+                 patch.object(remote.subprocess, "run") as runner, self.assertRaises(ValueError):
+                remote.main()
+            runner.assert_not_called()
+
+    def test_failed_preflight_does_not_upload_or_deploy(self):
+        for code, reason in ((1, "write access"), (255, "SSH connection failed")):
+            output = io.StringIO()
+            with self.subTest(code=code), patch.dict(os.environ, self.environment, clear=True), \
+                 patch.object(remote.subprocess, "run", side_effect=subprocess.CalledProcessError(
+                     code, ["ssh", "DO_NOT_LOG"], stderr=b"DO_NOT_LOG")) as runner, \
+                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                self.assertEqual(1, remote.main())
+            runner.assert_called_once()
+            self.assertIn(reason, output.getvalue())
+            self.assertNotIn("DO_NOT_LOG", output.getvalue())
+            self.assertIn("environment=production", output.getvalue())
+            self.assertIn("digest=sha256:", output.getvalue())
+
+    def test_demo_preflight_failure_reports_only_untouched_demo(self):
+        output = io.StringIO()
+        with patch.dict(os.environ, self.environment, clear=True), \
+             patch.object(remote.subprocess, "run", side_effect=[None] * 4 + [
+                 subprocess.CalledProcessError(1, ["ssh"])]) as runner, \
+             contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            self.assertEqual(1, remote.main())
+        self.assertEqual(5, runner.call_count)
+        self.assertIn("preflight failed environment=demo", output.getvalue())
+        self.assertIn("changed in this environment", output.getvalue())
+
+    def test_external_failure_stops_before_demo_and_reads_vps_states(self):
+        self.verifier.return_value = 1
+        output = io.StringIO()
+        with patch.dict(os.environ, self.environment, clear=True), \
+             patch.object(remote.subprocess, "run") as runner, \
+             contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            self.assertEqual(1, remote.main())
+        self.assertEqual(5, runner.call_count)
+        self.assertIn("container_states", runner.call_args_list[-1].args[0][-1])
+        self.assertNotIn("/opt/tutorplatform-demo", str(runner.call_args_list))
+        self.assertIn("External smoke failed environment=production", output.getvalue())
 
 
 class ComposeTests(unittest.TestCase):
