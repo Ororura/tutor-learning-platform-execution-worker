@@ -118,6 +118,9 @@ def validate_compose(config):
 
 
 def deploy(args):
+    if (getattr(args, "public_only", False) or not getattr(args, "frontend_url", None)
+            or not getattr(args, "backend_url", None)):
+        raise ValueError("deployment requires full-stack smoke with frontend-url and backend-url")
     directory = args.directory.resolve()
     if not (directory / "compose.yml").is_file():
         raise ValueError("directory must contain the existing compose.yml")

@@ -218,7 +218,8 @@ class DeliveryTests(unittest.TestCase):
 
     def args(self, **kwargs):
         values = dict(directory=self.root, service="backend", sha=self.sha, digest=self.digest,
-                      environment="production", attempts=1, timeout=120)
+                      environment="production", attempts=1, timeout=120,
+                      frontend_url="http://127.0.0.1:3000", backend_url="http://127.0.0.1:8080")
         values.update(kwargs)
         return argparse_namespace(**values)
 
@@ -325,6 +326,14 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.execute(sha="latest")
         self.assertEqual([], self.commands)
+
+    def test_missing_or_external_only_smoke_configuration_cannot_deploy(self):
+        for arguments in ({"frontend_url": None}, {"backend_url": None}, {"public_only": True}):
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                self.execute(**arguments)
+            self.assertEqual([], self.commands)
+            self.assertFalse((self.root / ".delivery.lock").exists())
+            self.assertFalse((self.root / "compose.override.yml").exists())
 
     def test_digest_mismatch_preserves_existing_compose(self):
         with self.assertRaises(RuntimeError):
