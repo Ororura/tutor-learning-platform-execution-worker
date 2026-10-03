@@ -8,6 +8,8 @@ The workflow builds once, scans the loaded runtime image with Trivy (HIGH/CRITIC
 including unfixed findings), then pushes the same image as `latest` and the full
 commit SHA. Production and demo deploy `:<sha>@sha256:<digest>` from that successful
 workflow. The digest also protects deployment against a tag changing on a rerun.
+After the VPS checks, the GitHub runner independently checks the public frontend
+and API. The deployment job succeeds only after both vantage points pass.
 OCI labels record source repository and revision; logs and the Actions summary
 record commit, image repository, tag, digest and environment.
 
@@ -47,6 +49,19 @@ python3 ops/execution-worker/smoke_deployment.py \
   --public-base-url https://tutor.ororura.site
 ```
 
+From outside the VPS, run the external-only checker (no Docker or internal URLs needed):
+
+```bash
+python3 scripts/smoke_deployment.py --public-only \
+  --public-base-url https://tutor.ororura.site
+```
+
+The workflow runs this mode on its GitHub runner after the remote full-stack smoke
+for each environment. External failure exits nonzero, reads safe VPS container
+states, stops before any subsequent environment and leaves manual rollback to the
+operator. The VPS history field `verified` records VPS checks only; it can be true
+when runner smoke fails. The Actions job result is the end-to-end success signal.
+
 The same checker is available locally as `python3 scripts/smoke_deployment.py`.
 `FRONTEND_URL`, `BACKEND_URL`, `PUBLIC_BASE_URL` and optional `WORKER_URL`
 can replace URL arguments. Without `WORKER_URL`, readiness runs through
@@ -70,7 +85,7 @@ statuses and allowlisted health fragments; the original startup error remains a
 failure even if those GETs succeed. The CLI allows 135 seconds for Compose to
 complete its own 120-second health wait and return an error.
 
-Failure exits nonzero, prints safe container states, and keeps the attempted pin
+VPS verification failure exits nonzero, prints safe container states, and keeps the attempted pin
 and history entry marked `verified=false`. There is no automatic rollback or cleanup.
 
 ## Manual rollback
