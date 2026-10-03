@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import shutil
@@ -18,6 +19,7 @@ SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import deploy_image as deploy
 import smoke_deployment as smoke
+import deploy_remote as remote
 
 
 class SmokeTests(unittest.TestCase):
@@ -326,6 +328,72 @@ class DeliveryTests(unittest.TestCase):
         self.config["services"]["backend"]["depends_on"]["postgres"]["condition"] = "service_started"
         with self.assertRaises(RuntimeError):
             deploy.validate_compose(self.config)
+
+
+class RemoteDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        self.environment = {
+            "IMAGE_SHA": "a" * 40, "IMAGE_DIGEST": "sha256:" + "b" * 64,
+            "SERVER_HOST": "example.com", "SERVER_USER": "deploy",
+            "PRODUCTION_PUBLIC_BASE_URL": "https://production.example.com",
+            "DEMO_PUBLIC_BASE_URL": "https://demo.example.com",
+        }
+
+    def test_configured_port_reaches_ssh_and_scp_for_both_environments(self):
+        with patch.dict(os.environ, dict(self.environment, SERVER_SSH_PORT="2222"), clear=True), \
+             patch.object(remote.subprocess, "run") as runner, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, remote.main())
+        self.assertEqual(8, runner.call_count)
+        for call in runner.call_args_list:
+            command = call.args[0]
+            flag = "-P" if command[0] == "scp" else "-p"
+            self.assertEqual("2222", command[command.index(flag) + 1])
+        self.assertIn("test -w /opt/tutorplatform", runner.call_args_list[0].args[0][-1])
+        self.assertIn("test -w /opt/tutorplatform-demo", runner.call_args_list[4].args[0][-1])
+        self.assertIn(self.environment["IMAGE_SHA"], runner.call_args_list[3].args[0][-1])
+        self.assertIn(self.environment["IMAGE_DIGEST"], runner.call_args_list[7].args[0][-1])
+
+    def test_default_port_is_22(self):
+        with patch.dict(os.environ, self.environment, clear=True), \
+             patch.object(remote.subprocess, "run") as runner, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, remote.main())
+        command = runner.call_args_list[0].args[0]
+        self.assertEqual("22", command[command.index("-p") + 1])
+
+    def test_invalid_port_has_no_remote_calls(self):
+        for port in ("0", "65536", "22;touch /tmp/data", "-1", "", "secret"):
+            with self.subTest(port=port), \
+                 patch.dict(os.environ, dict(self.environment, SERVER_SSH_PORT=port), clear=True), \
+                 patch.object(remote.subprocess, "run") as runner, self.assertRaises(ValueError):
+                remote.main()
+            runner.assert_not_called()
+
+    def test_failed_preflight_does_not_upload_or_deploy(self):
+        for code, reason in ((1, "write access"), (255, "SSH connection failed")):
+            output = io.StringIO()
+            with self.subTest(code=code), patch.dict(os.environ, self.environment, clear=True), \
+                 patch.object(remote.subprocess, "run", side_effect=subprocess.CalledProcessError(
+                     code, ["ssh", "DO_NOT_LOG"], stderr=b"DO_NOT_LOG")) as runner, \
+                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                self.assertEqual(1, remote.main())
+            runner.assert_called_once()
+            self.assertIn(reason, output.getvalue())
+            self.assertNotIn("DO_NOT_LOG", output.getvalue())
+            self.assertIn("environment=production", output.getvalue())
+            self.assertIn("digest=sha256:", output.getvalue())
+
+    def test_demo_preflight_failure_reports_only_untouched_demo(self):
+        output = io.StringIO()
+        with patch.dict(os.environ, self.environment, clear=True), \
+             patch.object(remote.subprocess, "run", side_effect=[None] * 4 + [
+                 subprocess.CalledProcessError(1, ["ssh"])]) as runner, \
+             contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            self.assertEqual(1, remote.main())
+        self.assertEqual(5, runner.call_count)
+        self.assertIn("preflight failed environment=demo", output.getvalue())
+        self.assertIn("changed in this environment", output.getvalue())
 
 
 class ComposeTests(unittest.TestCase):
