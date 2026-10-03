@@ -96,6 +96,28 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(5, output.count("result=PASS"))
         self.assertEqual(5, len(self.requests))
 
+    def test_external_mode_only_requests_public_endpoints(self):
+        args = smoke.parser().parse_args(["--public-only", "--public-base-url", self.base + "/public"])
+        with contextlib.redirect_stdout(io.StringIO()), patch.object(smoke, "container_states") as states:
+            self.assertEqual(0, smoke.verify(args))
+        self.assertEqual(["/public/", "/public/api/v1/public/registration-settings"], self.requests)
+        states.assert_not_called()
+
+    def test_external_failure_is_bounded_without_local_docker_diagnostics(self):
+        type(self).fail_path = "/public/api/v1/public/registration-settings"
+        type(self).fail_remaining = -1
+        with contextlib.redirect_stdout(io.StringIO()), patch.object(smoke, "container_states") as states:
+            self.assertEqual(1, smoke.verify(self.args("--public-only")))
+        self.assertEqual(4, len(self.requests))
+        self.assertTrue(all(path.startswith("/public/") for path in self.requests))
+        states.assert_not_called()
+
+    def test_full_stack_mode_requires_internal_urls(self):
+        args = smoke.parser().parse_args(["--public-base-url", self.base])
+        with patch.object(smoke, "request") as requester, self.assertRaises(ValueError):
+            smoke.verify(args)
+        requester.assert_not_called()
+
     def test_each_service_failure(self):
         for path in ("/frontend/", "/backend/actuator/health/readiness",
                      "/worker/actuator/health/readiness", "/public/",
@@ -332,6 +354,9 @@ class DeliveryTests(unittest.TestCase):
 
 class RemoteDeliveryTests(unittest.TestCase):
     def setUp(self):
+        verifier = patch.object(remote, "verify", return_value=0)
+        self.verifier = verifier.start()
+        self.addCleanup(verifier.stop)
         self.environment = {
             "IMAGE_SHA": "a" * 40, "IMAGE_DIGEST": "sha256:" + "b" * 64,
             "SERVER_HOST": "example.com", "SERVER_USER": "deploy",
@@ -353,6 +378,8 @@ class RemoteDeliveryTests(unittest.TestCase):
         self.assertIn("test -w /opt/tutorplatform-demo", runner.call_args_list[4].args[0][-1])
         self.assertIn(self.environment["IMAGE_SHA"], runner.call_args_list[3].args[0][-1])
         self.assertIn(self.environment["IMAGE_DIGEST"], runner.call_args_list[7].args[0][-1])
+        self.assertEqual(2, self.verifier.call_count)
+        self.assertTrue(all(call.args[0].public_only for call in self.verifier.call_args_list))
 
     def test_default_port_is_22(self):
         with patch.dict(os.environ, self.environment, clear=True), \
@@ -394,6 +421,18 @@ class RemoteDeliveryTests(unittest.TestCase):
         self.assertEqual(5, runner.call_count)
         self.assertIn("preflight failed environment=demo", output.getvalue())
         self.assertIn("changed in this environment", output.getvalue())
+
+    def test_external_failure_stops_before_demo_and_reads_vps_states(self):
+        self.verifier.return_value = 1
+        output = io.StringIO()
+        with patch.dict(os.environ, self.environment, clear=True), \
+             patch.object(remote.subprocess, "run") as runner, \
+             contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            self.assertEqual(1, remote.main())
+        self.assertEqual(5, runner.call_count)
+        self.assertIn("container_states", runner.call_args_list[-1].args[0][-1])
+        self.assertNotIn("/opt/tutorplatform-demo", str(runner.call_args_list))
+        self.assertIn("External smoke failed environment=production", output.getvalue())
 
 
 class ComposeTests(unittest.TestCase):

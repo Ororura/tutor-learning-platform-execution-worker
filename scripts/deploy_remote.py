@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from deploy_image import DEFAULT_SERVICE, DIGEST, IMAGES, SHA
-from smoke_deployment import url
+from smoke_deployment import parser as smoke_parser, url, verify
 
 
 def remote_command(arguments):
@@ -61,6 +61,19 @@ def main():
                    "--backend-url", f"http://127.0.0.1:{backend_port}",
                    "--public-base-url", public_urls[environment]]
         subprocess.run([*ssh, remote_command(command)], check=True, timeout=1200)
+        print(f"External smoke environment={environment} vantage=GitHub-runner", flush=True)
+        public = smoke_parser().parse_args(["--public-only", "--public-base-url", public_urls[environment],
+                                           "--directory", str(scripts.parent)])
+        if verify(public):
+            # Read only safe operational fields from the VPS after an external failure.
+            diagnostics = ("import sys; sys.path.insert(0, " + repr(operations) + "); "
+                           "from smoke_deployment import container_states; "
+                           "container_states(" + repr(directory) + ")")
+            subprocess.run([*ssh, remote_command(["python3", "-c", diagnostics])],
+                           check=True, timeout=30)
+            print(f"External smoke failed environment={environment}; use that stack's delivery "
+                  "history for manual rollback; no automatic recovery performed", file=sys.stderr)
+            return 1
     return 0
 
 
