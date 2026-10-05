@@ -32,6 +32,7 @@ public record ExecutionWorkerProperties(
     public record Runtime(
         @NotBlank String dockerExecutable,
         @NotBlank String pythonImage,
+        @NotBlank String javaImage,
         @DecimalMin("0.1") @DecimalMax("8.0") double cpuLimit,
         @Min(4) @Max(512) int pidLimit,
         @Min(1) @Max(1_048_576) int outputMaxBytes,

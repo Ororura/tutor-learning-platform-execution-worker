@@ -33,19 +33,21 @@ class ExecutionWorkerApiTest {
 
     @BeforeEach
     void stubRuntime() {
+        org.mockito.Mockito.when(sandboxRuntime.prepare(any())).thenCallRealMethod();
         given(sandboxRuntime.execute(any())).willReturn(new SandboxResult(
             SandboxResult.Status.COMPLETED, 42, "hello\n", null, false, false
         ));
     }
 
-    @Test
-    void internalEndpointExecutesThroughSandboxBoundary() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(com.tutorplatform.worker.application.ExecutionLanguage.class)
+    void internalEndpointExecutesThroughSandboxBoundary(com.tutorplatform.worker.application.ExecutionLanguage language) throws Exception {
         var executionId = UUID.randomUUID();
         var testCaseId = UUID.randomUUID();
 
         mockMvc.perform(post("/internal/v1/executions")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(validRequest(executionId, testCaseId)))
+                .content(validRequest(executionId, testCaseId).replace("PYTHON", language.name())))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.executionId").value(executionId.toString()))
             .andExpect(jsonPath("$.status").value("PASSED"))

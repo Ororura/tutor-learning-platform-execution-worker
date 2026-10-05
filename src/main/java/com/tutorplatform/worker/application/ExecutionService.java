@@ -62,46 +62,50 @@ public class ExecutionService {
         var passed = 0;
         var totalDuration = 0L;
 
-        for (var testCase : command.testCases()) {
-            var sandboxResult = bounded(sandboxRuntime.execute(new SandboxRequest(
-                command.executionId(),
-                command.language(),
-                command.sourceCode(),
-                testCase.inputText(),
-                command.timeLimitMs(),
-                command.memoryLimitMb(),
-                effectiveOutputLimit(command)
-            )), effectiveOutputLimit(command));
-            totalDuration += sandboxResult.executionTimeMs();
-            stdout.append(sandboxResult.stdoutExcerpt());
-            stderr.append(sandboxResult.stderrExcerpt());
+        try (var prepared = sandboxRuntime.prepare(new SandboxRequest(
+            command.executionId(), command.language(), command.sourceCode(), null,
+            command.timeLimitMs(), command.memoryLimitMb(), effectiveOutputLimit(command)
+        ))) {
+            var preparation = prepared.preparationResult();
+            if (preparation != null) {
+                preparation = bounded(preparation, effectiveOutputLimit(command));
+                stderr.append(preparation.stderrExcerpt());
+                return outcome(command, mapStatus(preparation.status()), 0, preparation.executionTimeMs(),
+                    stdout, stderr, results);
+            }
+            for (var testCase : command.testCases()) {
+                var sandboxResult = bounded(prepared.execute(testCase.inputText()), effectiveOutputLimit(command));
+                totalDuration += sandboxResult.executionTimeMs();
+                stdout.append(sandboxResult.stdoutExcerpt());
+                stderr.append(sandboxResult.stderrExcerpt());
 
-            if (sandboxResult.status() != SandboxResult.Status.COMPLETED) {
-                results.add(testResult(testCase, false, sandboxResult));
-                return outcome(
-                    command,
-                    mapStatus(sandboxResult.status()),
-                    passed,
-                    totalDuration,
-                    stdout,
-                    stderr,
-                    results
+                if (sandboxResult.status() != SandboxResult.Status.COMPLETED) {
+                    results.add(testResult(testCase, false, sandboxResult));
+                    return outcome(
+                        command,
+                        mapStatus(sandboxResult.status()),
+                        passed,
+                        totalDuration,
+                        stdout,
+                        stderr,
+                        results
+                    );
+                }
+
+                var testPassed = !sandboxResult.stdoutTruncated() && outputComparator.matches(
+                    testCase.expectedOutput(),
+                    sandboxResult.stdoutExcerpt() == null ? "" : sandboxResult.stdoutExcerpt(),
+                    testCase.comparisonMode()
                 );
+                if (testPassed) {
+                    passed++;
+                }
+                results.add(testResult(testCase, testPassed, sandboxResult));
             }
 
-            var testPassed = !sandboxResult.stdoutTruncated() && outputComparator.matches(
-                testCase.expectedOutput(),
-                sandboxResult.stdoutExcerpt() == null ? "" : sandboxResult.stdoutExcerpt(),
-                testCase.comparisonMode()
-            );
-            if (testPassed) {
-                passed++;
-            }
-            results.add(testResult(testCase, testPassed, sandboxResult));
+            var status = passed == command.testCases().size() ? ExecutionStatus.PASSED : ExecutionStatus.FAILED;
+            return outcome(command, status, passed, totalDuration, stdout, stderr, results);
         }
-
-        var status = passed == command.testCases().size() ? ExecutionStatus.PASSED : ExecutionStatus.FAILED;
-        return outcome(command, status, passed, totalDuration, stdout, stderr, results);
     }
 
     private boolean acquireSlot(ExecutionCommand command) {

@@ -226,6 +226,7 @@ class DockerSandboxRuntimeIntegrationTest {
             new ExecutionWorkerProperties.Runtime(
                 "docker",
                 PYTHON_IMAGE,
+                "tutor-java-runtime:21",
                 0.5,
                 16,
                 4_096,

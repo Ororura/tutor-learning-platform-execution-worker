@@ -2,7 +2,7 @@
 
 Internal, separately deployable boundary for isolated user-code execution.
 
-`POST /internal/v1/executions` validates the request and executes each Python test in a separate,
+`POST /internal/v1/executions` validates the request and executes each Python or Java test in a separate,
 ephemeral Docker container through the `SandboxRuntime` boundary. The runtime uses a fixed image,
 no network, a read-only root filesystem, a minimal read-only workspace, an allow-listed child
 environment, dropped capabilities, and CPU, memory, PID, tmpfs, wall-time, and output limits.
@@ -33,7 +33,7 @@ Probe responses contain only `status`; details and component lists remain hidden
 Health checks never call `SandboxRuntime`, execute user code, create containers/workspaces, pull
 images, or query the core database. The worker has no datasource/JDBC dependency or DB health check;
 do not supply it with `SPRING_DATASOURCE_*` settings or database credentials. Connectivity readiness
-does not validate the Python image or execution resources: provision the pinned image and workspace
+does not validate either runtime image or execution resources: provision the pinned image and workspace
 mount before accepting tasks. A successful probe is not a full sandbox execution test.
 
 The Docker image healthcheck polls readiness every 10 seconds, with a two-second HTTP limit,
@@ -52,11 +52,39 @@ Fast tests:
 ./gradlew test
 ```
 
-Real sandbox integration tests (requires Docker and the configured Python image):
+Real sandbox integration tests (requires Docker and the configured runtime images):
 
 ```bash
+docker build -f Dockerfile.runtime-java -t tutor-java-runtime:21 .
 ./gradlew sandboxIntegrationTest
 ```
+
+## Java 21 tasks
+
+`LanguageRuntimes` selects source filename, image and command in one registry. Python keeps the
+existing image and `main.py`. Java uses `Main.java` and the dedicated JDK 21 image above; override
+`EXECUTION_RUNTIME_JAVA_IMAGE` with a provisioned immutable image reference in deployments.
+Build/provision that image on the Docker daemon used by the worker before enabling Java tasks.
+Platform local Compose and frontend E2E Compose build it automatically; worker CI builds it before
+sandbox integration tests. Existing production deployment must provision this additional runtime image.
+
+Each request prepares one isolated read-only workspace. Java compiles once with `javac --release 21`
+inside a container with the same network, memory, CPU, PID, filesystem and output isolation.
+Compilation has a separate 10-second deadline. Annotation processing is disabled. Class files are
+packed into a bounded JAR inside the sandbox; only its bounded encoded bytes cross to the worker,
+which writes the archive without unpacking it. Source, supervisor and archive share the configured
+workspace byte budget. Each test runs `java -cp /workspace/program.jar Main` in a fresh container
+with independent stdin, processes, temporary filesystem and timeout. Comparison and statuses are
+shared with Python. All containers and the workspace are removed, including failed compilations.
+
+Use a public or package-private `Main` with `public static void main(String[] args)` and no package.
+Standard JDK libraries are available; dependencies, Maven/Gradle projects and interactive input are
+not supported. The default 128 MB task budget supports the sample programs; very small budgets can
+fail JVM startup. JVM heap is smaller than the container memory limit to reserve native memory.
+Compiler diagnostics are bounded and remove sandbox path prefixes. Compilation errors use
+`RUNTIME_ERROR`; infrastructure failures use `SYSTEM_ERROR`. Hidden-test redaction remains the
+backend's responsibility because the worker contract intentionally has no visibility flag.
+
 
 ## Immutable production delivery
 
