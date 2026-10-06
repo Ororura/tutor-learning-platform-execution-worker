@@ -1,0 +1,4 @@
+# Dedicated compiler/runtime sandbox. The Python package supplies the existing timeout supervisor.
+FROM eclipse-temurin:21-jdk-alpine@sha256:0bfc69a4758a86710e5c474032d28400a8bd00874766f9e8b1642ac2fd293159
+RUN apk add --no-cache python3
+USER 65534:65534

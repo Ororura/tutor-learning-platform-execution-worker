@@ -40,7 +40,8 @@ record WorkerExecutionRequest(
     }
 
     enum Language {
-        PYTHON
+        PYTHON,
+        JAVA
     }
 
     record TestCase(

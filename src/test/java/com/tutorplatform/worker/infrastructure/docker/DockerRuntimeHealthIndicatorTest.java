@@ -5,7 +5,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.tutorplatform.worker.config.ExecutionWorkerProperties;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.health.contributor.Status;
 
 import java.io.IOException;
 import java.time.Duration;

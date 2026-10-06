@@ -69,7 +69,7 @@ class DockerSandboxRuntimeTest {
         return new ExecutionWorkerProperties(
             new ExecutionWorkerProperties.Worker(1, Duration.ofSeconds(1), 100),
             new ExecutionWorkerProperties.Runtime(
-                "docker", "python:fixed", 1.0, 32, 64,
+                "docker", "python:fixed", "tutor-java-runtime:21", 1.0, 32, 64,
                 1_048_576, 16_777_216, Duration.ofSeconds(5), Duration.ofSeconds(1),
                 tempDirectory, null
             )

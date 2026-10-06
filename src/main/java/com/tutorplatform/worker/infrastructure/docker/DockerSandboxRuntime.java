@@ -16,6 +16,8 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Map;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -33,7 +35,7 @@ public class DockerSandboxRuntime implements SandboxRuntime {
 
         timeout_seconds = int(sys.argv[1]) / 1000
         environment = {
-            'PATH': '/usr/local/bin:/usr/bin:/bin',
+            'PATH': '/opt/java/openjdk/bin:/usr/local/bin:/usr/bin:/bin',
             'PYTHONDONTWRITEBYTECODE': '1',
             'PYTHONHASHSEED': '0',
             'PYTHONUNBUFFERED': '1',
@@ -41,7 +43,7 @@ public class DockerSandboxRuntime implements SandboxRuntime {
 
         try:
             process = subprocess.Popen(
-                ['/usr/local/bin/python3', '-I', '-B', '/workspace/main.py'],
+                sys.argv[2:],
                 stdin=sys.stdin.buffer,
                 stdout=sys.stdout.buffer,
                 stderr=sys.stderr.buffer,
@@ -57,6 +59,8 @@ public class DockerSandboxRuntime implements SandboxRuntime {
                     pass
                 process.wait()
                 raise SystemExit(124)
+            if return_code == 125 and '/workspace/compiler.py' in sys.argv[2:]:
+                raise SystemExit(125)
             raise SystemExit(0 if return_code == 0 else 1)
         except SystemExit:
             raise
@@ -64,31 +68,136 @@ public class DockerSandboxRuntime implements SandboxRuntime {
             raise SystemExit(125)
         """;
 
+    private static final String JAVA_COMPILER = """
+        import base64
+        import os
+        import subprocess
+        import sys
+        try:
+            os.mkdir('/tmp/classes')
+            heap = max(16, int(sys.argv[1]) - 80)
+            compiled = subprocess.run([
+                '/opt/java/openjdk/bin/javac', '-J-XX:+UseSerialGC', '-J-XX:ActiveProcessorCount=1',
+                '-J-Xmx' + str(heap) + 'm', '-J-XX:-UsePerfData', '-proc:none', '--release', '21',
+                '-encoding', 'UTF-8', '-d', '/tmp/classes', '/workspace/Main.java'
+            ], stdout=sys.stderr)
+            if compiled.returncode:
+                raise SystemExit(1)
+            if not os.path.isfile('/tmp/classes/Main.class'):
+                print('Use class Main without a package declaration.', file=sys.stderr)
+                raise SystemExit(1)
+            # A bounded archive crosses the sandbox boundary. It is never unpacked on the host.
+            archived = subprocess.run([
+                '/opt/java/openjdk/bin/jar', '-J-XX:+UseSerialGC', '-J-XX:ActiveProcessorCount=1',
+                '-J-Xmx' + str(heap) + 'm', '-J-XX:-UsePerfData',
+                '--create', '--file', '/tmp/program.jar', '-C', '/tmp/classes', '.'
+            ], stdout=sys.stderr)
+            if archived.returncode:
+                raise SystemExit(1)
+            with open('/tmp/program.jar', 'rb') as artifact:
+                data = artifact.read(int(sys.argv[2]) + 1)
+            if len(data) > int(sys.argv[2]):
+                print('Compiled program exceeds the workspace limit.', file=sys.stderr)
+                raise SystemExit(1)
+            sys.stdout.write(base64.b64encode(data).decode('ascii'))
+        except SystemExit:
+            raise
+        except BaseException:
+            raise SystemExit(125)
+        """;
+    private final Map<ExecutionLanguage, LanguageRuntimes.Runtime> runtimes;
     private final DockerCommandRunner commandRunner;
     private final ExecutionWorkerProperties properties;
 
     DockerSandboxRuntime(DockerCommandRunner commandRunner, ExecutionWorkerProperties properties) {
         this.commandRunner = commandRunner;
         this.properties = properties;
+        this.runtimes = LanguageRuntimes.registry(properties.runtime());
     }
 
     @Override
     public SandboxResult execute(SandboxRequest request) {
-        if (request.language() != ExecutionLanguage.PYTHON) {
-            return systemError();
+        try (var prepared = prepare(request)) {
+            return prepared.preparationResult() == null
+                ? prepared.execute(request.stdin()) : prepared.preparationResult();
         }
+    }
 
-        Path workspace = null;
+    @Override
+    public PreparedExecution prepare(SandboxRequest request) {
+        Path workspace;
+        try {
+            workspace = createWorkspace(request);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Cannot prepare workspace", exception);
+        }
+        var language = runtimes.get(request.language());
+        SandboxResult failure = null;
+        try {
+            if (language.compilationRequired()) {
+                // Compilation uses the same sandbox limits, with its own fixed wall deadline.
+                long existingBytes;
+                try (var files = Files.list(workspace)) {
+                    existingBytes = 0;
+                    for (var file : files.toList()) existingBytes += Files.size(file);
+                }
+                int artifactLimit = Math.toIntExact(properties.runtime().workspaceMaxBytes() - existingBytes);
+                var compileRequest = new SandboxRequest(request.executionId(), request.language(),
+                    request.sourceCode(), null, 10_000, request.memoryLimitMb(), 4 * ((artifactLimit + 2) / 3));
+                var compiled = executeInWorkspace(compileRequest, workspace, List.of("python3", "-I", "-B",
+                    "/workspace/compiler.py", Integer.toString(request.memoryLimitMb()), Integer.toString(artifactLimit)));
+                if (compiled.status() != SandboxResult.Status.COMPLETED) {
+                    failure = safeCompilationFailure(compiled, request.outputLimitBytes());
+                } else if (compiled.stdoutTruncated()) {
+                    failure = new SandboxResult(SandboxResult.Status.RUNTIME_ERROR, compiled.executionTimeMs(),
+                        null, "Compiled program exceeds the workspace limit.", false, false);
+                } else {
+                    byte[] artifact = Base64.getDecoder().decode(compiled.stdoutExcerpt());
+                    var target = workspace.resolve("program.jar");
+                    Files.write(target, artifact);
+                    setRuntimeReadablePermissions(workspace, target, target);
+                }
+            }
+        } catch (IOException | RuntimeException exception) {
+            cleanup(null, false, workspace, request.executionId());
+            throw new IllegalStateException("Cannot prepare program", exception);
+        }
+        var preparationFailure = failure;
+        return new PreparedExecution() {
+            public SandboxResult preparationResult() { return preparationFailure; }
+            public SandboxResult execute(String stdin) {
+                return executeInWorkspace(new SandboxRequest(request.executionId(), request.language(),
+                    request.sourceCode(), stdin, request.timeLimitMs(), request.memoryLimitMb(), request.outputLimitBytes()),
+                    workspace, language.command(request.memoryLimitMb()));
+            }
+            public void close() {
+                if (!cleanup(null, false, workspace, request.executionId())) {
+                    throw new IllegalStateException("Cannot clean workspace");
+                }
+            }
+        };
+    }
+
+    private static SandboxResult safeCompilationFailure(SandboxResult result, int outputLimit) {
+        var diagnostics = result.stderrExcerpt();
+        if (diagnostics != null) {
+            diagnostics = diagnostics.replace("/workspace/", "").replace("/tmp/", "");
+            diagnostics = com.tutorplatform.worker.application.BoundedTextAccumulator.truncate(diagnostics, outputLimit);
+        }
+        return new SandboxResult(result.status(), result.executionTimeMs(), null, diagnostics,
+            false, result.stderrTruncated());
+    }
+
+    private SandboxResult executeInWorkspace(SandboxRequest request, Path workspace, List<String> programCommand) {
         String containerName = null;
         var containerCreated = false;
         SandboxResult result;
         try {
-            workspace = createWorkspace(request);
             containerName = containerName(request.executionId());
             // Cleanup by the server-generated name even if create times out after daemon acceptance.
             containerCreated = true;
             var createResult = commandRunner.run(
-                createCommand(containerName, workspace, request),
+                createCommand(containerName, workspace, request, programCommand),
                 null,
                 properties.runtime().operationTimeout(),
                 INTERNAL_OUTPUT_LIMIT
@@ -111,7 +220,7 @@ public class DockerSandboxRuntime implements SandboxRuntime {
             result = systemError();
         }
 
-        var cleanupSucceeded = cleanup(containerName, containerCreated, workspace, request.executionId());
+        var cleanupSucceeded = cleanup(containerName, containerCreated, null, request.executionId());
         return cleanupSucceeded ? result : systemError();
     }
 
@@ -219,12 +328,22 @@ public class DockerSandboxRuntime implements SandboxRuntime {
             properties.runtime().workspaceDirectory(),
             "execution-" + request.executionId() + "-"
         );
-        var source = workspace.resolve("main.py");
-        var runner = workspace.resolve("runner.py");
-        Files.writeString(source, request.sourceCode(), StandardCharsets.UTF_8);
-        Files.writeString(runner, SANDBOX_RUNNER, StandardCharsets.UTF_8);
-        setRuntimeReadablePermissions(workspace, source, runner);
-        return workspace;
+        try {
+            var source = workspace.resolve(runtimes.get(request.language()).sourceFile());
+            var runner = workspace.resolve("runner.py");
+            Files.writeString(source, request.sourceCode(), StandardCharsets.UTF_8);
+            Files.writeString(runner, SANDBOX_RUNNER, StandardCharsets.UTF_8);
+            if (runtimes.get(request.language()).compilationRequired()) {
+                var compiler = workspace.resolve("compiler.py");
+                Files.writeString(compiler, JAVA_COMPILER, StandardCharsets.UTF_8);
+                setRuntimeReadablePermissions(workspace, compiler, compiler);
+            }
+            setRuntimeReadablePermissions(workspace, source, runner);
+            return workspace;
+        } catch (IOException | RuntimeException exception) {
+            deleteWorkspace(workspace);
+            throw exception;
+        }
     }
 
     private static void setRuntimeReadablePermissions(Path workspace, Path source, Path runner) {
@@ -237,7 +356,7 @@ public class DockerSandboxRuntime implements SandboxRuntime {
         }
     }
 
-    private List<String> createCommand(String containerName, Path workspace, SandboxRequest request) {
+    private List<String> createCommand(String containerName, Path workspace, SandboxRequest request, List<String> programCommand) {
         var runtime = properties.runtime();
         var command = new ArrayList<String>(List.of(
             runtime.dockerExecutable(),
@@ -267,9 +386,10 @@ public class DockerSandboxRuntime implements SandboxRuntime {
             "--env", "PYTHONUNBUFFERED=1",
             "--env", "PYTHONHASHSEED=0",
             workspaceMount(workspace),
-            runtime.pythonImage(),
+            runtimes.get(request.language()).image(),
             "python3", "-I", "-B", "/workspace/runner.py", Integer.toString(request.timeLimitMs())
         ));
+        command.addAll(programCommand);
         return List.copyOf(command);
     }
 

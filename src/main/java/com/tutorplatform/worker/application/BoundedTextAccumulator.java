@@ -2,7 +2,7 @@ package com.tutorplatform.worker.application;
 
 import java.nio.charset.StandardCharsets;
 
-final class BoundedTextAccumulator {
+public final class BoundedTextAccumulator {
     private final int maxBytes;
     private final StringBuilder value = new StringBuilder();
     private int usedBytes;
@@ -32,7 +32,7 @@ final class BoundedTextAccumulator {
         return value.isEmpty() ? null : value.toString();
     }
 
-    static String truncate(String text, int maxBytes) {
+    public static String truncate(String text, int maxBytes) {
         var accumulator = new BoundedTextAccumulator(maxBytes);
         accumulator.append(text);
         return accumulator.valueOrNull();

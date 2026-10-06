@@ -6,9 +6,10 @@ import com.tutorplatform.worker.application.SandboxRuntime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -18,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -33,25 +35,37 @@ class ExecutionWorkerApiTest {
 
     @BeforeEach
     void stubRuntime() {
+        org.mockito.Mockito.when(sandboxRuntime.prepare(any())).thenCallRealMethod();
         given(sandboxRuntime.execute(any())).willReturn(new SandboxResult(
             SandboxResult.Status.COMPLETED, 42, "hello\n", null, false, false
         ));
     }
 
-    @Test
-    void internalEndpointExecutesThroughSandboxBoundary() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(com.tutorplatform.worker.application.ExecutionLanguage.class)
+    void internalEndpointExecutesThroughSandboxBoundary(com.tutorplatform.worker.application.ExecutionLanguage language) throws Exception {
         var executionId = UUID.randomUUID();
         var testCaseId = UUID.randomUUID();
 
         mockMvc.perform(post("/internal/v1/executions")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(validRequest(executionId, testCaseId)))
+                .content(validRequest(executionId, testCaseId).replace("PYTHON", language.name())))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.executionId").value(executionId.toString()))
             .andExpect(jsonPath("$.status").value("PASSED"))
             .andExpect(jsonPath("$.passedTests").value(1))
             .andExpect(jsonPath("$.totalTests").value(1))
-            .andExpect(jsonPath("$.testResults[0].testCaseId").value(testCaseId.toString()));
+            .andExpect(jsonPath("$.testResults[0].testCaseId").value(testCaseId.toString()))
+            .andExpect(content().json("""
+                {
+                  "executionId": "%s", "status": "PASSED", "passedTests": 1, "totalTests": 1,
+                  "executionTimeMs": 42, "stdoutExcerpt": "hello\\n", "stderrExcerpt": null,
+                  "testResults": [{
+                    "testCaseId": "%s", "passed": true, "executionTimeMs": 42,
+                    "stdoutExcerpt": "hello\\n", "stderrExcerpt": null
+                  }]
+                }
+                """.formatted(executionId, testCaseId), JsonCompareMode.STRICT));
     }
 
     @Test

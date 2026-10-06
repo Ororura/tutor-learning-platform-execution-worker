@@ -184,7 +184,7 @@ class ExecutionServiceTest {
         return new ExecutionWorkerProperties(
             new ExecutionWorkerProperties.Worker(maxConcurrent, queueTimeout, 100),
             new ExecutionWorkerProperties.Runtime(
-                "docker", "python:fixed", 1.0, 32, outputMaxBytes,
+                "docker", "python:fixed", "tutor-java-runtime:21", 1.0, 32, outputMaxBytes,
                 1_048_576, 16_777_216, Duration.ofSeconds(5), Duration.ofSeconds(1),
                 Path.of("/tmp/execution-tests"), null
             )

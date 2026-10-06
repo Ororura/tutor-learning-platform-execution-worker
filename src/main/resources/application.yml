@@ -5,6 +5,8 @@ server:
 spring:
   application:
     name: tutor-learning-platform-execution-worker
+  jackson:
+    use-jackson2-defaults: true
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
@@ -42,6 +44,7 @@ execution:
   runtime:
     docker-executable: ${EXECUTION_RUNTIME_DOCKER_EXECUTABLE:docker}
     python-image: ${EXECUTION_RUNTIME_PYTHON_IMAGE:python:3.12.10-alpine3.21@sha256:9c51ecce261773a684c8345b2d4673700055c513b4d54bc0719337d3e4ee552e}
+    java-image: ${EXECUTION_RUNTIME_JAVA_IMAGE:tutor-java-runtime:21}
     cpu-limit: ${EXECUTION_RUNTIME_CPU_LIMIT:1.0}
     pid-limit: ${EXECUTION_RUNTIME_PID_LIMIT:32}
     output-max-bytes: ${EXECUTION_RUNTIME_OUTPUT_MAX_BYTES:16384}
