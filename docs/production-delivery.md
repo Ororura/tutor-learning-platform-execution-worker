@@ -130,11 +130,20 @@ Before uploading scripts, each environment performs a read-only SSH write-access
 preflight and logs commit, image repository, SHA, digest and environment. A failed
 preflight stops that environment without changing images or stack state.
 `SERVER_SSH_PORT` must be `1..65535` and is used consistently by keyscan, SSH and SCP.
-The current merged-main rollout runs failed on SSH port 22 connection timeouts
-from GitHub-hosted runners, before any image deployment. An administrator must
-verify that `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY` and the configured port
-permit access from those runners (routing/firewall/SSH policy). A local successful
-`adminvps` login does not establish runner connectivity.
+The VPS protects SSH with `ufw limit 22/tcp`, which denies six or more new
+connections from one IP within 30 seconds ([UFW manual](https://manpages.ubuntu.com/manpages/jammy/man8/ufw.8.html)).
+The default multi-key `ssh-keyscan` plus separate SSH/SCP commands exhausted that
+budget before deployment. Setup now scans only the VPS's ED25519 host key, and
+SSH/SCP share an authenticated `ControlMaster` connection across both stacks.
+Its socket is inside the private `~/.ssh` directory, with a bounded 60-second idle
+`ControlPersist`; host-key checks, explicit deployment identity and existing timeouts
+remain enforced. The firewall rule does not need to change.
+
+A read-only GitHub-runner check verified the configured key and reproduced the
+TCP timeout. With one host-key scan and connection reuse,
+[eight consecutive commands passed](https://github.com/Ororura/tutor-learning-platform-execution-worker/actions/runs/37430716389)
+without changing VPS files or containers. A local successful `adminvps` login
+alone does not establish runner connectivity.
 
 The audited `adminvps` login (`ororura`) cannot write the root-owned stack directories.
 Before first rollout, an administrator should confirm the actual `SERVER_USER` is
