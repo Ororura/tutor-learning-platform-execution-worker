@@ -54,7 +54,7 @@ def main():
                                 capture_output=True, timeout=10).stdout.split()[1]
         fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(base64.b64decode(public)).digest()).decode().rstrip("=")
         print(json.dumps({"matches_verified_mac_key": fingerprint == EXPECTED_KEY}), flush=True)
-        scanned = subprocess.run(["ssh-keyscan", "-T", "10", "-p", port, "-H", host],
+        scanned = subprocess.run(["ssh-keyscan", "-t", "ed25519", "-T", "10", "-p", port, "-H", host],
                                  capture_output=True, timeout=30)
         known_hosts = Path(directory) / "known_hosts"
         known_hosts.write_bytes(scanned.stdout)
