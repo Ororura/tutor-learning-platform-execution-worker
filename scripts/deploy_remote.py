@@ -30,6 +30,8 @@ def main():
     if not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= 65535:
         raise ValueError("SERVER_SSH_PORT must be an integer between 1 and 65535")
     key = Path.home() / ".ssh/tutorplatform_deploy"
+    # Reuse one authenticated transport across SSH/SCP and both stacks to avoid
+    # triggering VPS connection rate limits. The socket stays in private ~/.ssh.
     connection = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "IdentitiesOnly=yes",
                   "-o", "ControlMaster=auto", "-o", "ControlPersist=60",
                   "-o", "ControlPath=" + str(key.parent / "tutorplatform-%C")]
