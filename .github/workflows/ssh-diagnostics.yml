@@ -1,0 +1,23 @@
+name: Read-only SSH diagnostics
+
+on:
+  push:
+    branches: [fix/ssh-deployment-preflight]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Probe deployment SSH without changing the VPS
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_PORT: ${{ vars.SERVER_SSH_PORT || '22' }}
+        run: python3 scripts/ssh_diagnostics.py
