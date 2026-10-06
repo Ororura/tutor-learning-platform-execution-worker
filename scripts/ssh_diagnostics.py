@@ -68,9 +68,13 @@ def main():
         for index in range(8):
             name, options = "shared_connection_" + str(index + 1), []
             start = time.monotonic()
-            result = subprocess.run([ssh[0], *options, *ssh[1:]], capture_output=True,
-                                    text=True, timeout=20)
-            debug = result.stderr.lower()
+            # The background ControlMaster keeps verbose stderr open. Use a private
+            # file instead of a pipe so collecting debug cannot delay the client.
+            with tempfile.TemporaryFile() as debug_stream:
+                result = subprocess.run([ssh[0], *options, *ssh[1:]], stdout=subprocess.PIPE,
+                                        stderr=debug_stream, text=True, timeout=20)
+                debug_stream.seek(0)
+                debug = debug_stream.read().decode("utf-8", errors="replace").lower()
             print(json.dumps({"probe": name, "exit": result.returncode,
                               "seconds": round(time.monotonic() - start, 2),
                               "tcp_connected": "connection established" in debug,
