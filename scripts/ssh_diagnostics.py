@@ -62,11 +62,11 @@ def main():
                           "host_key_count": len(scanned.stdout.splitlines())}), flush=True)
         ssh = ["ssh", "-vvv", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + str(known_hosts),
+               "-o", "IdentitiesOnly=yes", "-o", "ControlMaster=auto", "-o", "ControlPersist=60",
+               "-o", "ControlPath=" + str(Path(directory) / "control-%C"),
                "-p", port, "-i", str(key), user + "@" + host, "printf authenticated"]
-        for name, options in (("current", []),
-                              ("explicit_identity", ["-o", "IdentitiesOnly=yes"]),
-                              ("ipv4", ["-4", "-o", "IdentitiesOnly=yes"]),
-                              ("isolated_config", ["-F", "/dev/null", "-4", "-o", "IdentitiesOnly=yes"])):
+        for index in range(8):
+            name, options = "shared_connection_" + str(index + 1), []
             start = time.monotonic()
             result = subprocess.run([ssh[0], *options, *ssh[1:]], capture_output=True,
                                     text=True, timeout=20)
@@ -77,11 +77,11 @@ def main():
                               "server_banner": "remote protocol version" in debug,
                               "key_exchange": "newkeys received" in debug,
                               "key_offered": "offering public key" in debug,
-                              "authenticated": "authenticated to" in debug,
+                              "authenticated": result.returncode == 0 and result.stdout == "authenticated",
                               "reason": "success" if result.returncode == 0 else reason(debug)}), flush=True)
-            if result.returncode == 0:
-                return 0
-    return 1
+            if result.returncode != 0:
+                return 1
+    return 0
 
 
 if __name__ == "__main__":

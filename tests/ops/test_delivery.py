@@ -398,6 +398,22 @@ class RemoteDeliveryTests(unittest.TestCase):
         command = runner.call_args_list[0].args[0]
         self.assertEqual("22", command[command.index("-p") + 1])
 
+    def test_ssh_and_scp_share_a_bounded_private_control_connection(self):
+        with patch.dict(os.environ, self.environment, clear=True), \
+             patch.object(remote.subprocess, "run") as runner, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, remote.main())
+        controls = []
+        for call in runner.call_args_list:
+            command = call.args[0]
+            settings = [command[index + 1] for index, arg in enumerate(command) if arg == "-o"]
+            self.assertIn("IdentitiesOnly=yes", settings)
+            self.assertIn("ControlMaster=auto", settings)
+            self.assertIn("ControlPersist=60", settings)
+            controls.append(next(setting for setting in settings if setting.startswith("ControlPath=")))
+        self.assertEqual(1, len(set(controls)))
+        self.assertEqual("ControlPath=" + str(Path.home() / ".ssh/tutorplatform-%C"), controls[0])
+
     def test_invalid_port_has_no_remote_calls(self):
         for port in ("0", "65536", "22;touch /tmp/data", "-1", "", "secret"):
             with self.subTest(port=port), \

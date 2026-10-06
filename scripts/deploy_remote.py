@@ -30,7 +30,10 @@ def main():
     if not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= 65535:
         raise ValueError("SERVER_SSH_PORT must be an integer between 1 and 65535")
     key = Path.home() / ".ssh/tutorplatform_deploy"
-    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", port, "-i", str(key), target]
+    connection = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "IdentitiesOnly=yes",
+                  "-o", "ControlMaster=auto", "-o", "ControlPersist=60",
+                  "-o", "ControlPath=" + str(key.parent / "tutorplatform-%C")]
+    ssh = ["ssh", *connection, "-p", port, "-i", str(key), target]
     public_urls = {"production": url(os.environ["PRODUCTION_PUBLIC_BASE_URL"]),
                    "demo": url(os.environ["DEMO_PUBLIC_BASE_URL"])}
     scripts = Path(__file__).resolve().parent
@@ -52,7 +55,7 @@ def main():
                   "no images or stack state changed in this environment", file=sys.stderr, flush=True)
             return 1
         subprocess.run([*ssh, remote_command(["mkdir", "-p", operations])], check=True, timeout=30)
-        subprocess.run(["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-P", port, "-i", str(key),
+        subprocess.run(["scp", "-q", *connection, "-P", port, "-i", str(key),
                         str(scripts / "deploy_image.py"), str(scripts / "smoke_deployment.py"),
                         target + ":" + operations + "/"], check=True, timeout=30)
         command = ["python3", operations + "/deploy_image.py", "--directory", directory,

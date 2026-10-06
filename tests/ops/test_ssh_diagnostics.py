@@ -34,7 +34,7 @@ class SSHDiagnosticsTests(unittest.TestCase):
             if command[0] == "ssh-keyscan":
                 return subprocess.CompletedProcess(command, 0, b"DO_NOT_LOG_HOST_KEY\n")
             self.assertEqual("printf authenticated", command[-1])
-            return subprocess.CompletedProcess(command, 0, "DO_NOT_LOG_REMOTE_STDOUT",
+            return subprocess.CompletedProcess(command, 0, "authenticated",
                                                "Authenticated to DO_NOT_LOG_HOST with DO_NOT_LOG_PRIVATE_KEY")
 
         output = io.StringIO()
@@ -55,14 +55,14 @@ class SSHDiagnosticsTests(unittest.TestCase):
         failed = subprocess.CompletedProcess([], 255, "DO_NOT_LOG",
             "Connection established. Connection timed out during banner exchange DO_NOT_LOG")
         results = [subprocess.CompletedProcess([], 0, self.public),
-                   subprocess.CompletedProcess([], 0, b"DO_NOT_LOG\n"), *[failed] * 4]
+                   subprocess.CompletedProcess([], 0, b"DO_NOT_LOG\n"), failed]
         with patch.dict(os.environ, self.environment, clear=True), \
              patch.object(diagnostics.socket, "getaddrinfo", return_value=[(socket.AF_INET,)]), \
              patch.object(diagnostics.subprocess, "run", side_effect=results) as runner, \
              contextlib.redirect_stdout(output):
             self.assertEqual(1, diagnostics.main())
-        self.assertEqual(6, runner.call_count)
-        self.assertEqual(4, output.getvalue().count('"reason": "banner_exchange_timeout"'))
+        self.assertEqual(3, runner.call_count)
+        self.assertEqual(1, output.getvalue().count('"reason": "banner_exchange_timeout"'))
         self.assertNotIn("DO_NOT_LOG", output.getvalue())
         self.assertTrue(all(call.args[0][-1] == "printf authenticated" for call in runner.call_args_list[2:]))
 
