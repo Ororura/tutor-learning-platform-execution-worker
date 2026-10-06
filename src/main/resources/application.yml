@@ -5,6 +5,8 @@ server:
 spring:
   application:
     name: tutor-learning-platform-execution-worker
+  jackson:
+    use-jackson2-defaults: true
   lifecycle:
     timeout-per-shutdown-phase: 20s
 

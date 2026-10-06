@@ -11,7 +11,7 @@ import com.tutorplatform.worker.config.ExecutionWorkerProperties;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.health.contributor.Status;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

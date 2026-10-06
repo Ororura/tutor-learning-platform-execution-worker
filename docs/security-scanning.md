@@ -72,3 +72,32 @@ Baseline advisory IDs (no findings are suppressed):
 
 Remove the Tomcat/Jackson overrides once the Spring Boot BOM supplies at least
 these patched versions. No allow-list is needed.
+
+## CVE-2026-47884 remediation (2026-10-06)
+
+The Java-support PR passed its unit and Docker sandbox integration checks, but
+the production image scan found CVE-2026-47884 in `spring-webmvc:6.2.19`.
+The [Spring advisory](https://spring.io/security/cve-2026-47884/) lists 6.2.20
+as enterprise-only and 7.0.9 as the open-source fix. Rather than mixing Spring
+Framework 7 into Boot 3 or suppressing the finding, the worker uses the coherent
+Spring Boot 4.0.8 BOM, which manages Framework 7.0.9 and Tomcat 11.0.24.
+The old Tomcat 10/Jackson 2 overrides are replaced by compatible patch overrides
+for Tomcat 11.0.25 and Jackson 3.1.7. Scanning the unmodified Boot 4 BOM found
+three Tomcat and five Jackson HIGH/CRITICAL findings:
+
+- Tomcat: CVE-2026-65182, CVE-2026-65905, CVE-2026-68525.
+- Jackson core: CVE-2026-89407, CVE-2026-89425.
+- Jackson databind: CVE-2026-68497, CVE-2026-91776, CVE-2026-91777.
+
+Remove these overrides when the Boot BOM manages at least those patched versions.
+
+Boot 4's MVC and actuator test starters and relocated health/metrics APIs replace
+their Boot 3 equivalents. Jackson 3 uses `spring.jackson.use-jackson2-defaults`
+to preserve the existing wire behavior. The API test compares the complete JSON
+execution response strictly, including UUIDs, enum values and null diagnostics,
+for both Python and Java. Existing validation, health/readiness, Prometheus and
+real sandbox tests continue to verify the worker boundaries.
+
+The production image security gate and its HIGH/CRITICAL policy remain unchanged;
+no vulnerability exception is introduced. Backend and frontend framework
+versions are unaffected by this worker-only update.

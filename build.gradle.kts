@@ -1,15 +1,15 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.5.16"
+    id("org.springframework.boot") version "4.0.8"
     id("io.spring.dependency-management") version "1.1.7"
 }
 
 group = "com.tutorplatform"
 version = "0.1.0-SNAPSHOT"
 
-// Security patches newer than the Spring Boot 3.5.16 dependency BOM.
-extra["tomcat.version"] = "10.1.60"
-extra["jackson-bom.version"] = "2.21.7"
+// Security patches newer than the Spring Boot 4.0.8 dependency BOM.
+extra["tomcat.version"] = "11.0.25"
+extra["jackson-bom.version"] = "3.1.7"
 
 java {
     toolchain {
@@ -22,11 +22,12 @@ repositories {
 }
 
 dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
 	runtimeOnly("io.micrometer:micrometer-registry-prometheus")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 }
 
 tasks.test {
