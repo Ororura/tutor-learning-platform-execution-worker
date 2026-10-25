@@ -90,3 +90,27 @@ backend's responsibility because the worker contract intentionally has no visibi
 
 See [production delivery](docs/production-delivery.md) for exact image selection,
 smoke verification, deployed SHA inspection and manual rollback.
+
+## HTML / CSS / JavaScript exercises
+
+`WEB` uses `Dockerfile.runtime-web` (`tutor-web-runtime:1`, override with `EXECUTION_RUNTIME_WEB_IMAGE`).
+Provision this image on the worker's Docker daemon before enabling web tasks. It contains pinned
+Playwright/Chromium and the fixed checker in `web-runtime/run.cjs`. Student source is a JSON object
+with `html`, `css`, and `javascript` strings; each teacher-owned test supplies JSON `{label, script}`
+through stdin. The checker exposes Playwright `page` and Node `assert` to trusted test scripts,
+while student scripts run only in Chromium. Successful checks print `PASS`; assertion failures
+print `FAIL` and bounded diagnostics. Browser startup failures and execution timeouts retain the
+worker's infrastructure/timeout statuses. Source does not supply test scripts or verdicts.
+
+The same Docker isolation is retained. Web containers require at least 128 PIDs, 128 MiB tmpfs,
+and 1024 file descriptors; templates use a 512 MiB memory budget and a 10-second per-test deadline.
+The isolation boundary is the container, not a Playwright browser context. No external network
+access, npm projects, remote assets, or browser bindings to backend data are provided.
+
+```sh
+docker build -f Dockerfile.runtime-web -t tutor-web-runtime:1 .
+./gradlew sandboxIntegrationTest --tests '*DockerSandboxRuntimeIntegrationTest.web*' --tests '*DockerSandboxRuntimeIntegrationTest.infiniteWeb*'
+```
+
+The frontend catalog smoke test (`npm run test:web-exercises` in the frontend checkout) verifies
+all 15 templates against this image. Platform usage is documented in backend `docs/web-exercises.md`.
