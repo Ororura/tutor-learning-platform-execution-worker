@@ -8,6 +8,7 @@ import java.util.Map;
 final class LanguageRuntimes {
     record Runtime(String sourceFile, String image, boolean compilationRequired) {
         List<String> command(int memoryMb) {
+            if (sourceFile.equals("solution.json")) return List.of("/usr/local/bin/node", "/opt/web/run.cjs");
             if (!compilationRequired) {
                 return List.of("/usr/local/bin/python3", "-I", "-B", "/workspace/main.py");
             }
@@ -21,7 +22,8 @@ final class LanguageRuntimes {
     static Map<ExecutionLanguage, Runtime> registry(ExecutionWorkerProperties.Runtime properties) {
         return Map.of(
             ExecutionLanguage.PYTHON, new Runtime("main.py", properties.pythonImage(), false),
-            ExecutionLanguage.JAVA, new Runtime("Main.java", properties.javaImage(), true)
+            ExecutionLanguage.JAVA, new Runtime("Main.java", properties.javaImage(), true),
+            ExecutionLanguage.WEB, new Runtime("solution.json", properties.webImage(), false)
         );
     }
     private LanguageRuntimes() { }

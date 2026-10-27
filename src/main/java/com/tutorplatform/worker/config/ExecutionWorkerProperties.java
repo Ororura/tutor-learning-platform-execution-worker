@@ -41,9 +41,18 @@ public record ExecutionWorkerProperties(
         @NotNull Duration operationTimeout,
         @NotNull Duration containerStartupGrace,
         @NotNull Path workspaceDirectory,
-        String workspaceVolume
+        String workspaceVolume,
+        String webImage
     ) {
+        public Runtime(String dockerExecutable, String pythonImage, String javaImage, double cpuLimit,
+            int pidLimit, int outputMaxBytes, long workspaceMaxBytes, long tmpfsMaxBytes,
+            Duration operationTimeout, Duration containerStartupGrace, Path workspaceDirectory, String workspaceVolume) {
+            this(dockerExecutable, pythonImage, javaImage, cpuLimit, pidLimit, outputMaxBytes, workspaceMaxBytes,
+                tmpfsMaxBytes, operationTimeout, containerStartupGrace, workspaceDirectory, workspaceVolume, "tutor-web-runtime:1");
+        }
+        @org.springframework.boot.context.properties.bind.ConstructorBinding
         public Runtime {
+            if (webImage == null || webImage.isBlank()) webImage = "tutor-web-runtime:1";
             requirePositiveAtMost(operationTimeout, Duration.ofSeconds(60), "execution.runtime.operation-timeout");
             requirePositiveAtMost(
                 containerStartupGrace,

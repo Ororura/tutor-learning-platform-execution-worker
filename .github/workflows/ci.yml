@@ -85,6 +85,7 @@ jobs:
           docker info
           docker pull "${SANDBOX_PYTHON_IMAGE}"
           docker build -f Dockerfile.runtime-java -t tutor-java-runtime:21 .
+          docker build -f Dockerfile.runtime-web -t tutor-web-runtime:1 .
 
       - name: Run Docker sandbox integration tests
         run: ./gradlew sandboxIntegrationTest --no-daemon

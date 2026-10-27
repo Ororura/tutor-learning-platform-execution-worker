@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.spy;
@@ -218,6 +219,61 @@ class DockerSandboxRuntimeIntegrationTest {
         assertWorkspaceClean();
         assertNoContainer(executionId);
         return outcome;
+    }
+
+    @Test
+    void webExercisesRunInsideTheSameSandboxAndRejectWrongSolutions() throws Exception {
+        String source = "{\"html\":\"<button id='add'>+</button><p id='count'>0</p>\",\"css\":\"\",\"javascript\":\"let n=0;document.querySelector('#add').onclick=()=>document.querySelector('#count').textContent=++n;\"}";
+        String check = "{\"label\":\"Counter\",\"script\":\"await page.locator('#add').click(); assert.equal(await page.locator('#count').innerText(),'1');\"}";
+        assertThat(executeWeb(source, check, 10000).status()).isEqualTo(ExecutionStatus.PASSED);
+        assertThat(executeWeb(source.replace("++n", "n"), check, 10000).status()).isEqualTo(ExecutionStatus.FAILED);
+    }
+
+    @Test
+    void webContainersCanRunConcurrently() throws Exception {
+        var firstId = UUID.randomUUID();
+        var secondId = UUID.randomUUID();
+        var properties = properties();
+        var service = new ExecutionService(new DockerSandboxRuntime(new DockerCommandRunner(), properties), new OutputComparator(), properties);
+        String source = "{\"html\":\"<p>Safe</p>\",\"css\":\"\",\"javascript\":\"\"}";
+        String check = "{\"label\":\"Concurrent browser\",\"script\":\"await page.waitForTimeout(1000); assert.equal(await page.locator('p').innerText(),'Safe');\"}";
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var results = executor.<ExecutionOutcome>invokeAll(List.of(
+                () -> service.execute(new ExecutionCommand(firstId, ExecutionLanguage.WEB, source, 10000, 512, 4096,
+                    List.of(new ExecutionCommand.TestCase(UUID.randomUUID(), check, "PASS", ComparisonMode.EXACT)))),
+                () -> service.execute(new ExecutionCommand(secondId, ExecutionLanguage.WEB, source, 10000, 512, 4096,
+                    List.of(new ExecutionCommand.TestCase(UUID.randomUUID(), check, "PASS", ComparisonMode.EXACT))))
+            ));
+            for (var result : results) {
+                assertThat(result.get().status()).isEqualTo(ExecutionStatus.PASSED);
+            }
+        }
+        assertWorkspaceClean();
+        assertNoContainer(firstId);
+        assertNoContainer(secondId);
+    }
+
+    @Test
+    void infiniteWebScriptTimesOutAndCannotLeaveContainers() throws Exception {
+        assertThat(executeWeb("{\"html\":\"\",\"css\":\"\",\"javascript\":\"while(true){}\"}",
+            "{\"label\":\"Loop\",\"script\":\"assert.ok(true);\"}", 2000).status()).isEqualTo(ExecutionStatus.TIMEOUT);
+    }
+
+    @Test
+    void webRuntimeBlocksExternalRequestsAndHasNoHostFilesInTheBrowser() throws Exception {
+        String check = "{\"label\":\"Isolation\",\"script\":\"assert.equal(await page.evaluate(async()=>{try{await fetch('https://example.com');return false}catch{return true}}),true); assert.equal(await page.evaluate(async()=>{try{await fetch('file:///etc/passwd');return false}catch{return true}}),true);\"}";
+        assertThat(executeWeb("{\"html\":\"<p>Safe</p>\",\"css\":\"\",\"javascript\":\"\"}", check, 10000).status()).isEqualTo(ExecutionStatus.PASSED);
+    }
+
+    private ExecutionOutcome executeWeb(String source, String check, int timeout) throws Exception {
+        var id = UUID.randomUUID();
+        var properties = properties();
+        var service = new ExecutionService(new DockerSandboxRuntime(new DockerCommandRunner(), properties), new OutputComparator(), properties);
+        var result = service.execute(new ExecutionCommand(id, ExecutionLanguage.WEB, source, timeout, 512, 4096,
+            List.of(new ExecutionCommand.TestCase(UUID.randomUUID(), check, "PASS", ComparisonMode.EXACT))));
+        assertWorkspaceClean();
+        assertNoContainer(id);
+        return result;
     }
 
     private ExecutionWorkerProperties properties() {

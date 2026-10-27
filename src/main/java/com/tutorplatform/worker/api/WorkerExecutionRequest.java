@@ -41,7 +41,8 @@ record WorkerExecutionRequest(
 
     enum Language {
         PYTHON,
-        JAVA
+        JAVA,
+        WEB
     }
 
     record TestCase(

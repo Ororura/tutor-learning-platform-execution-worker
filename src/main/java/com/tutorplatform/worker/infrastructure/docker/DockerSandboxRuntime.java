@@ -59,6 +59,8 @@ public class DockerSandboxRuntime implements SandboxRuntime {
                     pass
                 process.wait()
                 raise SystemExit(124)
+            if return_code in (124, 125) and '/opt/web/run.cjs' in sys.argv[2:]:
+                raise SystemExit(return_code)
             if return_code == 125 and '/workspace/compiler.py' in sys.argv[2:]:
                 raise SystemExit(125)
             raise SystemExit(0 if return_code == 0 else 1)
@@ -358,6 +360,10 @@ public class DockerSandboxRuntime implements SandboxRuntime {
 
     private List<String> createCommand(String containerName, Path workspace, SandboxRequest request, List<String> programCommand) {
         var runtime = properties.runtime();
+        boolean web = request.language() == ExecutionLanguage.WEB;
+        int pidLimit = web ? Math.max(128, runtime.pidLimit()) : runtime.pidLimit();
+        long tmpfsBytes = web ? Math.max(134217728, runtime.tmpfsMaxBytes()) : runtime.tmpfsMaxBytes();
+        // Use the per-container PID cgroup; nproc would share a quota across sandboxes with UID 65534.
         var command = new ArrayList<String>(List.of(
             runtime.dockerExecutable(),
             "create",
@@ -370,16 +376,15 @@ public class DockerSandboxRuntime implements SandboxRuntime {
             "--read-only",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
-            "--pids-limit", Integer.toString(runtime.pidLimit()),
+            "--pids-limit", Integer.toString(pidLimit),
             "--memory", request.memoryLimitMb() + "m",
             "--memory-swap", request.memoryLimitMb() + "m",
             "--cpus", String.format(Locale.ROOT, "%.3f", runtime.cpuLimit()),
             "--user", "65534:65534",
             "--workdir", "/workspace",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=" + runtime.tmpfsMaxBytes(),
-            "--shm-size", Long.toString(runtime.tmpfsMaxBytes()),
-            "--ulimit", "nofile=64:64",
-            "--ulimit", "nproc=" + runtime.pidLimit() + ":" + runtime.pidLimit(),
+            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=" + tmpfsBytes,
+            "--shm-size", Long.toString(tmpfsBytes),
+            "--ulimit", web ? "nofile=1024:1024" : "nofile=64:64",
             "--stop-timeout", "1",
             "--init",
             "--env", "PYTHONDONTWRITEBYTECODE=1",
